@@ -1,64 +1,109 @@
 import numpy as np
 from scipy.stats import poisson
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize, minimize_scalar
 from db.database import get_connection
 
 MAX_GOALS = 8
-SHRINKAGE = 0.85
 RHO_BOUNDS = (-0.2, 0.2)
 
 
-def _shrink(ratio: float) -> float:
-    return 1 + SHRINKAGE * (ratio - 1)
+def _dixon_coles_tau_vec(hg: np.ndarray, ag: np.ndarray, lam_h: np.ndarray, lam_a: np.ndarray, rho: float) -> np.ndarray:
+    """Version vectorisee de la correction Dixon-Coles (tableaux numpy au lieu d'un seul match)."""
+    tau = np.ones_like(lam_h)
+    m00 = (hg == 0) & (ag == 0)
+    m01 = (hg == 0) & (ag == 1)
+    m10 = (hg == 1) & (ag == 0)
+    m11 = (hg == 1) & (ag == 1)
+    tau[m00] = 1 - lam_h[m00] * lam_a[m00] * rho
+    tau[m01] = 1 + lam_h[m01] * rho
+    tau[m10] = 1 + lam_a[m10] * rho
+    tau[m11] = 1 - rho
+    return tau
 
 
-def _dixon_coles_tau(home_goals: int, away_goals: int, lambda_home: float, lambda_away: float, rho: float) -> float:
-    if home_goals == 0 and away_goals == 0:
-        return 1 - lambda_home * lambda_away * rho
-    elif home_goals == 0 and away_goals == 1:
-        return 1 + lambda_home * rho
-    elif home_goals == 1 and away_goals == 0:
-        return 1 + lambda_away * rho
-    elif home_goals == 1 and away_goals == 1:
-        return 1 - rho
-    return 1.0
+def _prepare_match_arrays(rows, team_to_idx: dict) -> dict:
+    """Convertit les lignes SQL en tableaux numpy (indices d'equipe, buts) pour un calcul vectorise."""
+    home_idx = np.array([team_to_idx[r["home_team"]] for r in rows])
+    away_idx = np.array([team_to_idx[r["away_team"]] for r in rows])
+    home_goals = np.array([r["home_goals"] for r in rows], dtype=float)
+    away_goals = np.array([r["away_goals"] for r in rows], dtype=float)
+    return {"home_idx": home_idx, "away_idx": away_idx, "home_goals": home_goals, "away_goals": away_goals}
 
 
-def _compute_ratios(rows) -> tuple:
-    league_avg_home = sum(r["home_goals"] for r in rows) / len(rows)
-    league_avg_away = sum(r["away_goals"] for r in rows) / len(rows)
+def _neg_log_likelihood_no_rho(params, n_teams, arrays):
+    """Vraisemblance negative vectorisee (Poisson pur, rho=0), pour estimer attack/defense/home_adv."""
+    attack = params[:n_teams]
+    defense = params[n_teams:2 * n_teams]
+    home_adv = params[2 * n_teams]
 
-    teams = {r["home_team"] for r in rows} | {r["away_team"] for r in rows}
-    strengths = {}
+    lam_h = np.exp(attack[arrays["home_idx"]] + defense[arrays["away_idx"]] + home_adv)
+    lam_a = np.exp(attack[arrays["away_idx"]] + defense[arrays["home_idx"]])
 
-    for team in teams:
-        home_matches = [r for r in rows if r["home_team"] == team]
-        away_matches = [r for r in rows if r["away_team"] == team]
-
-        home_attack = _shrink((sum(r["home_goals"] for r in home_matches) / len(home_matches)) / league_avg_home if home_matches else 1.0)
-        home_defense = _shrink((sum(r["away_goals"] for r in home_matches) / len(home_matches)) / league_avg_away if home_matches else 1.0)
-        away_attack = _shrink((sum(r["away_goals"] for r in away_matches) / len(away_matches)) / league_avg_away if away_matches else 1.0)
-        away_defense = _shrink((sum(r["home_goals"] for r in away_matches) / len(away_matches)) / league_avg_home if away_matches else 1.0)
-
-        strengths[team] = {
-            "home_attack": home_attack,
-            "home_defense": home_defense,
-            "away_attack": away_attack,
-            "away_defense": away_defense,
-        }
-
-    return strengths, league_avg_home, league_avg_away
+    ll = np.sum(poisson.logpmf(arrays["home_goals"], lam_h)) + np.sum(poisson.logpmf(arrays["away_goals"], lam_a))
+    return -ll
 
 
+def _fit_team_strengths_mle(rows) -> dict:
+    """
+    Estime attack[team], defense[team] et l'avantage domicile par maximum de
+    vraisemblance conjointe (vectorise numpy, rho=0 a cette etape).
+    """
+    teams = sorted({r["home_team"] for r in rows} | {r["away_team"] for r in rows})
+    n = len(teams)
+    if n < 2:
+        raise ValueError("Pas assez d'equipes distinctes pour entrainer le modele.")
+
+    team_to_idx = {t: i for i, t in enumerate(teams)}
+    arrays = _prepare_match_arrays(rows, team_to_idx)
+
+    x0 = np.concatenate([np.zeros(n), np.zeros(n), [0.2]])
+    constraints = [{"type": "eq", "fun": lambda p, n=n: np.sum(p[:n])}]
+
+    result = minimize(
+        _neg_log_likelihood_no_rho, x0, args=(n, arrays),
+        constraints=constraints, method="SLSQP",
+        options={"maxiter": 300, "ftol": 1e-7},
+    )
+
+    if not result.success:
+        print(f"Attention : l'optimisation des forces d'equipe n'a pas pleinement converge ({result.message})")
+
+    params = result.x
+    attack = dict(zip(teams, params[:n]))
+    defense = dict(zip(teams, params[n:2 * n]))
+    home_adv = float(params[2 * n])
+
+    return {"attack": attack, "defense": defense, "home_advantage": home_adv}
+
+
+_SEASON_STRENGTHS_CACHE = {}
 _GLOBAL_RHO_CACHE = None
+
+
+def _get_season_strengths(season: str) -> dict:
+    """Calcule (ou reutilise depuis le cache) les forces attack/defense/home_advantage d'une saison."""
+    if season in _SEASON_STRENGTHS_CACHE:
+        return _SEASON_STRENGTHS_CACHE[season]
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT home_team, away_team, home_goals, away_goals FROM matches "
+        "WHERE season = ? AND home_goals IS NOT NULL",
+        (season,),
+    ).fetchall()
+    if not rows:
+        raise ValueError(f"Aucun match trouve pour la saison {season}")
+
+    strengths = _fit_team_strengths_mle(rows)
+    _SEASON_STRENGTHS_CACHE[season] = strengths
+    return strengths
 
 
 def fit_global_rho(force_refresh: bool = False) -> float:
     """
-    Ajuste rho UNE SEULE FOIS sur l'ensemble des saisons disponibles en base,
-    plutot qu'individuellement par saison d'entrainement (instable, voir diagnostic).
-    Limite assumee : utilise des saisons "futures" par rapport a certains couples de
-    backtest -> legere fuite de donnees, acceptee vu la taille limitee du dataset.
+    Ajuste rho UNE SEULE FOIS sur l'ensemble des saisons disponibles (voir
+    diagnostic_rho.py : un fit par saison individuelle s'est revele instable).
+    Reutilise les forces deja calculees via le cache par saison.
     """
     global _GLOBAL_RHO_CACHE
     if _GLOBAL_RHO_CACHE is not None and not force_refresh:
@@ -67,7 +112,8 @@ def fit_global_rho(force_refresh: bool = False) -> float:
     conn = get_connection()
     seasons = [r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall()]
 
-    pooled = []
+    pooled_lam_h, pooled_lam_a, pooled_hg, pooled_ag = [], [], [], []
+
     for season in seasons:
         rows = conn.execute(
             "SELECT home_team, away_team, home_goals, away_goals FROM matches "
@@ -76,23 +122,27 @@ def fit_global_rho(force_refresh: bool = False) -> float:
         ).fetchall()
         if not rows:
             continue
-        strengths, league_avg_home, league_avg_away = _compute_ratios(rows)
+        s = _get_season_strengths(season)
+
         for r in rows:
-            pooled.append((r, strengths, league_avg_home, league_avg_away))
+            home, away = r["home_team"], r["away_team"]
+            if home not in s["attack"] or away not in s["attack"]:
+                continue
+            lam_h = np.exp(s["attack"][home] + s["defense"][away] + s["home_advantage"])
+            lam_a = np.exp(s["attack"][away] + s["defense"][home])
+            pooled_lam_h.append(lam_h)
+            pooled_lam_a.append(lam_a)
+            pooled_hg.append(r["home_goals"])
+            pooled_ag.append(r["away_goals"])
+
+    lam_h = np.array(pooled_lam_h)
+    lam_a = np.array(pooled_lam_a)
+    hg = np.array(pooled_hg, dtype=float)
+    ag = np.array(pooled_ag, dtype=float)
 
     def neg_log_likelihood(rho):
-        ll = 0.0
-        for r, strengths, league_avg_home, league_avg_away in pooled:
-            home, away = r["home_team"], r["away_team"]
-            if home not in strengths or away not in strengths:
-                continue
-            exp_home = strengths[home]["home_attack"] * strengths[away]["away_defense"] * league_avg_home
-            exp_away = strengths[away]["away_attack"] * strengths[home]["home_defense"] * league_avg_away
-
-            p_h = max(poisson.pmf(r["home_goals"], exp_home), 1e-10)
-            p_a = max(poisson.pmf(r["away_goals"], exp_away), 1e-10)
-            tau = max(_dixon_coles_tau(r["home_goals"], r["away_goals"], exp_home, exp_away, rho), 1e-10)
-            ll += np.log(p_h) + np.log(p_a) + np.log(tau)
+        tau = np.clip(_dixon_coles_tau_vec(hg, ag, lam_h, lam_a, rho), 1e-10, None)
+        ll = np.sum(poisson.logpmf(hg, lam_h)) + np.sum(poisson.logpmf(ag, lam_a)) + np.sum(np.log(tau))
         return -ll
 
     result = minimize_scalar(neg_log_likelihood, bounds=RHO_BOUNDS, method="bounded")
@@ -101,42 +151,30 @@ def fit_global_rho(force_refresh: bool = False) -> float:
 
 
 def compute_team_strengths(season: str) -> dict:
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT home_team, away_team, home_goals, away_goals FROM matches "
-        "WHERE season = ? AND home_goals IS NOT NULL",
-        (season,),
-    ).fetchall()
-
-    if not rows:
-        raise ValueError(f"Aucun match trouve pour la saison {season}")
-
-    strengths, league_avg_home, league_avg_away = _compute_ratios(rows)
-    rho = fit_global_rho()
-
-    return {
-        "teams": strengths,
-        "league_avg_home": league_avg_home,
-        "league_avg_away": league_avg_away,
-        "rho": rho,
-    }
+    """Calcule les forces d'equipe (attack, defense, home_advantage) par MLE
+    conjointe pour une saison (mise en cache), + rho (global, mis en cache)."""
+    strengths = dict(_get_season_strengths(season))
+    strengths["rho"] = fit_global_rho()
+    return strengths
 
 
 def predict_match_from_strengths(strengths_data: dict, home_team: str, away_team: str) -> dict:
-    teams = strengths_data["teams"]
+    attack = strengths_data["attack"]
+    defense = strengths_data["defense"]
+    home_adv = strengths_data["home_advantage"]
     rho = strengths_data["rho"]
 
-    if home_team not in teams or away_team not in teams:
+    if home_team not in attack or away_team not in attack:
         raise ValueError("Equipe inconnue pour cette saison")
 
-    exp_home_goals = teams[home_team]["home_attack"] * teams[away_team]["away_defense"] * strengths_data["league_avg_home"]
-    exp_away_goals = teams[away_team]["away_attack"] * teams[home_team]["home_defense"] * strengths_data["league_avg_away"]
+    exp_home_goals = np.exp(attack[home_team] + defense[away_team] + home_adv)
+    exp_away_goals = np.exp(attack[away_team] + defense[home_team])
 
     matrix = np.zeros((MAX_GOALS + 1, MAX_GOALS + 1))
     for i in range(MAX_GOALS + 1):
         for j in range(MAX_GOALS + 1):
             p = poisson.pmf(i, exp_home_goals) * poisson.pmf(j, exp_away_goals)
-            p *= _dixon_coles_tau(i, j, exp_home_goals, exp_away_goals, rho)
+            p *= _dixon_coles_tau_vec(np.array([i]), np.array([j]), np.array([exp_home_goals]), np.array([exp_away_goals]), rho)[0]
             matrix[i, j] = max(p, 0.0)
     matrix /= matrix.sum()
 
@@ -151,8 +189,8 @@ def predict_match_from_strengths(strengths_data: dict, home_team: str, away_team
     ))
 
     return {
-        "expected_home_goals": round(exp_home_goals, 2),
-        "expected_away_goals": round(exp_away_goals, 2),
+        "expected_home_goals": round(float(exp_home_goals), 2),
+        "expected_away_goals": round(float(exp_away_goals), 2),
         "rho": round(rho, 4),
         "1": round(p_home_win, 4),
         "X": round(p_draw, 4),
