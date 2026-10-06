@@ -1,8 +1,10 @@
-# Traduit un nom d'équipe Understat vers le nom équivalent utilisé par football-data.co.uk.
-# football-data.co.uk sert de référence, car il couvre plus de saisons et d'équipes.
+﻿# Traduit un nom d'equipe (Understat ou variante courante) vers le nom
+# equivalent utilise par football-data.co.uk (notre reference).
 UNDERSTAT_TO_FD = {
     "Athletic Club": "Ath Bilbao",
+    "Athletic Bilbao": "Ath Bilbao",
     "Atletico Madrid": "Ath Madrid",
+    "Atletico de Madrid": "Ath Madrid",
     "Real Betis": "Betis",
     "Celta Vigo": "Celta",
     "Espanyol": "Espanol",
