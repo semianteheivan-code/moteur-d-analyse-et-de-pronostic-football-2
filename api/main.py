@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional, List
 from engine import analyze_match
 from daily_batch import run_daily_batch
+from db.database import get_connection
+from config import DEFAULT_TRAIN_SEASON
 
 app = FastAPI(title="Moteur de pronostic football - API locale")
 
@@ -19,7 +21,7 @@ class MatchRequest(BaseModel):
     home_team: str
     away_team: str
     match_date: str
-    train_season: str
+    train_season: Optional[str] = None
     odds: Optional[OddsInput] = None
 
 
@@ -32,9 +34,20 @@ def _odds_to_dict(odds: Optional[OddsInput]) -> Optional[dict]:
     }
 
 
+@app.get("/health")
+def health():
+    conn = get_connection()
+    row = conn.execute("SELECT MAX(date) as last_match_date FROM matches").fetchone()
+    return {
+        "status": "ok",
+        "last_match_date_in_db": row["last_match_date"] if row else None,
+    }
+
+
 @app.post("/analyze")
 def analyze(req: MatchRequest):
-    return analyze_match(req.home_team, req.away_team, req.match_date, req.train_season,
+    train_season = req.train_season or DEFAULT_TRAIN_SEASON
+    return analyze_match(req.home_team, req.away_team, req.match_date, train_season,
                           odds=_odds_to_dict(req.odds))
 
 
@@ -52,7 +65,7 @@ class ComboDefinitionInput(BaseModel):
 
 class DailyBatchRequest(BaseModel):
     fixtures: List[FixtureInput]
-    train_season: str
+    train_season: Optional[str] = None
     combo_definitions: List[ComboDefinitionInput]
     batch_date: Optional[str] = None
 
@@ -64,4 +77,5 @@ def daily_batch(req: DailyBatchRequest):
         for f in req.fixtures
     ]
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
-    return run_daily_batch(fixtures, req.train_season, combo_definitions, req.batch_date)
+    train_season = req.train_season or DEFAULT_TRAIN_SEASON
+    return run_daily_batch(fixtures, train_season, combo_definitions, req.batch_date)
