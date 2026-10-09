@@ -11,6 +11,9 @@ UNDERSTAT_TO_FD = {
     "Real Sociedad": "Sociedad",
     "Real Valladolid": "Valladolid",
     "Rayo Vallecano": "Vallecano",
+    "Racing Santander": "Santander",
+    "CD Alaves": "Alaves",
+        "Deportivo A Coruna": "La Coruna",
 }
 
 

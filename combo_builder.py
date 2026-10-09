@@ -1,27 +1,39 @@
 ﻿from itertools import combinations
 
 MAX_SELECTIONS = 4  # nombre max de paris dans un combine, pour limiter la combinatoire
+MIN_PROBABILITY = 0.60
+MIN_INDIVIDUAL_ODDS = 1.30
 
 
 def _candidate_bets(analyzed_matches: list) -> list:
     """
-    Extrait, de chaque match analyse avec succes, le marche le plus sur
-    (highest probability), comme candidat pour un combine.
+    Pour chaque match analyse avec succes, retient UN marche eligible par match
+    (probabilite >= MIN_PROBABILITY ET cote >= MIN_INDIVIDUAL_ODDS), celui avec
+    la plus haute probabilite parmi les eligibles. N'importe quel marche du match
+    peut etre candidat, pas seulement safest_market (qui peut etre sans cote).
     """
     candidates = []
     for m in analyzed_matches:
         if m["status"] != "ok":
             continue
-        label = m["safest_market"]
-        market = m["markets"][label]
-        if market.get("market_odds") is None:
+
+        eligible = [
+            {"market": label, "probability": market["probability"], "odds": market["market_odds"]}
+            for label, market in m["markets"].items()
+            if market.get("market_odds") is not None
+            and market["probability"] >= MIN_PROBABILITY
+            and market["market_odds"] >= MIN_INDIVIDUAL_ODDS
+        ]
+        if not eligible:
             continue
+
+        best = max(eligible, key=lambda e: e["probability"])
         candidates.append({
             "home_team": m["home_team"],
             "away_team": m["away_team"],
-            "market": label,
-            "probability": market["probability"],
-            "odds": market["market_odds"],
+            "market": best["market"],
+            "probability": best["probability"],
+            "odds": best["odds"],
         })
     return candidates
 

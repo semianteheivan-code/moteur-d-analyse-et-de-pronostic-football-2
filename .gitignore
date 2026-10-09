@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 data/
 config_secrets.py
+detail_journee8.json
