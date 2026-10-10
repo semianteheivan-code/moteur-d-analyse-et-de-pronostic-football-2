@@ -20,3 +20,11 @@ MAX_MISSING_RATIO = 0.40   # au-dela, le moteur refuse de predire
 
 # --- Valeur par defaut pour train_season (A5, bilan du 10/10) ---
 DEFAULT_TRAIN_SEASON = "2526"  # saison la plus proche de 2627 en cours
+
+# --- Fuseau de reference : public actuel et vise par le bot (Cote d'Ivoire) ---
+REFERENCE_TIMEZONE = "Africa/Abidjan"
+
+# --- Parametres pour /fixtures (etape 2, A1 + D2) ---
+DEFAULT_FIXTURES_DAYS = 3
+FIXTURES_CACHE_TTL_HOURS = 12   # cache du calendrier (change rarement)
+ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)

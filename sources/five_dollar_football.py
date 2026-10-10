@@ -1,7 +1,10 @@
-from datetime import datetime, timedelta, timezone
+﻿from datetime import datetime, timedelta, timezone
+import json
 
 import requests
 from config_secrets import FIVEDOLLAR_API_KEY
+from config import FIXTURES_CACHE_TTL_HOURS, ODDS_CACHE_TTL_HOURS
+from db.database import get_connection
 
 BASE_URL = "https://api.5dollarfootballapi.com/v1"
 HEADERS = {"Authorization": f"Bearer {FIVEDOLLAR_API_KEY}"}
@@ -84,6 +87,7 @@ def build_match_requests(start_date: datetime, num_days: int, train_season: str)
         })
     return result
 
+
 def get_fixtures_for_daily_batch(day: datetime) -> list:
     """
     Récupère les matchs de La Liga d'une seule journée, au format minimal
@@ -106,7 +110,61 @@ def get_fixtures_for_daily_batch(day: datetime) -> list:
         for fx in fixtures
     ]
 
+
+# --- A partir d'ici : nouvelles fonctions avec cache (etape 2, A1 + D2) ---
+# N'affectent pas les fonctions ci-dessus ni run_live_batch.py, qui restent inchanges.
+
+def _cache_get(key: str, ttl_hours: float):
+    conn = get_connection()
+    row = conn.execute("SELECT payload, fetched_at FROM raw_cache WHERE key = ?", (key,)).fetchone()
+    if not row:
+        return None
+    fetched_at = datetime.fromisoformat(row["fetched_at"])
+    if datetime.now(timezone.utc) - fetched_at > timedelta(hours=ttl_hours):
+        return None
+    return json.loads(row["payload"])
+
+
+def _cache_set(key: str, payload) -> None:
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO raw_cache (key, payload, fetched_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at",
+        (key, json.dumps(payload), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def get_la_liga_fixtures_cached(start_date: datetime, num_days: int) -> list:
+    """
+    Comme get_la_liga_fixtures, mais avec un cache par jour (table raw_cache),
+    pour eviter de rappeler l'API a chaque requete /fixtures (D2).
+    """
+    all_fixtures = []
+    for offset in range(num_days):
+        day = start_date + timedelta(days=offset)
+        day_key = f"fixtures_day:{LA_LIGA_ID}:{day.date().isoformat()}"
+        cached = _cache_get(day_key, FIXTURES_CACHE_TTL_HOURS)
+        if cached is not None:
+            all_fixtures.extend(cached)
+            continue
+        fixtures = get_la_liga_fixtures(day, 1)
+        _cache_set(day_key, fixtures)
+        all_fixtures.extend(fixtures)
+    return all_fixtures
+
+
+def get_fixture_odds_cached(fixture_id: int) -> dict:
+    """Comme get_fixture_odds, mais avec un cache par match (table raw_cache, D2)."""
+    odds_key = f"odds:{fixture_id}"
+    cached = _cache_get(odds_key, ODDS_CACHE_TTL_HOURS)
+    if cached is not None:
+        return cached
+    odds = get_fixture_odds(fixture_id)
+    _cache_set(odds_key, odds)
+    return odds
+
+
 if __name__ == "__main__":
-    import json
     matches = build_match_requests(datetime(2026, 10, 18, tzinfo=timezone.utc), 1, "2526")
     print(json.dumps(matches, indent=2, ensure_ascii=False))

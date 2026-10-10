@@ -1,10 +1,13 @@
 ﻿from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional, List
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from engine import analyze_match
 from daily_batch import run_daily_batch
 from db.database import get_connection
-from config import DEFAULT_TRAIN_SEASON
+from config import DEFAULT_TRAIN_SEASON, DEFAULT_FIXTURES_DAYS, REFERENCE_TIMEZONE
+from sources.five_dollar_football import get_la_liga_fixtures_cached, get_fixture_odds_cached
 
 app = FastAPI(title="Moteur de pronostic football - API locale")
 
@@ -41,6 +44,28 @@ def health():
     return {
         "status": "ok",
         "last_match_date_in_db": row["last_match_date"] if row else None,
+    }
+
+
+@app.get("/fixtures")
+def fixtures(days: Optional[int] = None):
+    days = min(days or DEFAULT_FIXTURES_DAYS, 14)  # garde-fou simple contre un usage abusif du quota
+    today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    raw_fixtures = get_la_liga_fixtures_cached(today, days)
+    result = [
+        {
+            "home_team": fx["teams"]["home"]["name"],
+            "away_team": fx["teams"]["away"]["name"],
+            "kickoff_utc": fx["kickoff_utc"],
+            "odds": get_fixture_odds_cached(fx["id"]),
+        }
+        for fx in raw_fixtures
+    ]
+    return {
+        "league": "La Liga",
+        "days": days,
+        "reference_date": today.date().isoformat(),
+        "fixtures": result,
     }
 
 
