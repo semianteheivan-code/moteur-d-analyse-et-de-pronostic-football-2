@@ -16,27 +16,10 @@ from sources.five_dollar_football import (
 app = FastAPI(title="Moteur de pronostic football - API locale")
 
 
-class OddsInput(BaseModel):
-    home: Optional[float] = None
-    draw: Optional[float] = None
-    away: Optional[float] = None
-    over_25: Optional[float] = None
-    under_25: Optional[float] = None
-
-
 class MatchRequest(BaseModel):
     home_team: str
     away_team: str
     train_season: Optional[str] = None
-
-
-def _odds_to_dict(odds: Optional[OddsInput]) -> Optional[dict]:
-    if not odds:
-        return None
-    return {
-        "1": odds.home, "X": odds.draw, "2": odds.away,
-        "over_2.5": odds.over_25, "under_2.5": odds.under_25,
-    }
 
 
 @app.get("/health")
@@ -99,12 +82,6 @@ def analyze(req: MatchRequest):
     return analyze_match(req.home_team, req.away_team, match_date, train_season, odds=odds)
 
 
-class FixtureInput(BaseModel):
-    home_team: str
-    away_team: str
-    odds: Optional[OddsInput] = None
-
-
 class ComboDefinitionInput(BaseModel):
     name: str
     min_odds: float
@@ -112,18 +89,42 @@ class ComboDefinitionInput(BaseModel):
 
 
 class DailyBatchRequest(BaseModel):
-    fixtures: List[FixtureInput]
     train_season: Optional[str] = None
     combo_definitions: List[ComboDefinitionInput]
-    batch_date: Optional[str] = None
+    batch_date: Optional[str] = None  # format "YYYY-MM-DD", par defaut aujourd'hui (Africa/Abidjan)
 
 
 @app.post("/daily-batch")
 def daily_batch(req: DailyBatchRequest):
+    """
+    Le client ne fournit plus les matchs ni leurs cotes : le moteur recupere
+    lui-meme les matchs La Liga du jour demande (ou aujourd'hui par defaut,
+    en heure d'Abidjan) et leurs cotes. Le client garde la main sur les
+    fourchettes de combines demandees (combo_definitions) et, s'il le
+    souhaite, sur la date a traiter (batch_date).
+    """
+    if req.batch_date:
+        day = datetime.strptime(req.batch_date, "%Y-%m-%d")
+    else:
+        day = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    batch_date = day.date().isoformat()
+
+    raw_fixtures = get_la_liga_fixtures_cached(day, 1)
+    if not raw_fixtures:
+        return {
+            "status": "no_matches_available",
+            "batch_date": batch_date,
+            "reason": "aucun match La Liga ce jour-la",
+        }
+
     fixtures = [
-        {"home_team": f.home_team, "away_team": f.away_team, "odds": _odds_to_dict(f.odds)}
-        for f in req.fixtures
+        {
+            "home_team": fx["teams"]["home"]["name"],
+            "away_team": fx["teams"]["away"]["name"],
+            "odds": get_fixture_odds_cached(fx["id"]),
+        }
+        for fx in raw_fixtures
     ]
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
-    return run_daily_batch(fixtures, train_season, combo_definitions, req.batch_date)
+    return run_daily_batch(fixtures, train_season, combo_definitions, batch_date)
