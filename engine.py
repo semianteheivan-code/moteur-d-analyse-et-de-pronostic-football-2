@@ -5,6 +5,7 @@ from features.form import compute_match_features
 from sources.team_names import normalize
 
 MISSING_DATA_REFUSAL_THRESHOLD = 0.40  # section 7 du cahier des charges
+SUSPICIOUS_EDGE_THRESHOLD = 0.20  # M4 : au-dela, edge suspect (cote obsolete/erreur probable), pas une vraie opportunite
 
 SIMPLE_MARKETS = ["1", "X", "2", "over_2.5", "under_2.5"]
 DOUBLE_CHANCE_MARKETS = ["1X", "X2", "12"]
@@ -123,6 +124,7 @@ def analyze_match(home_team: str, away_team: str, match_date: str, train_season:
                 "market_implied_probability": round(market_prob, 4),
                 "edge": round(edge, 4),
                 "value_bet": edge >= 0.05,
+                "suspicious": edge >= SUSPICIOUS_EDGE_THRESHOLD,
             })
         markets[label] = entry
 
@@ -130,12 +132,19 @@ def analyze_match(home_team: str, away_team: str, match_date: str, train_season:
     markets.update(_stat_markets(home_team, away_team, train_season))
 
     opportunities = sorted(
-        ({"market": label, **entry} for label, entry in markets.items() if entry.get("value_bet")),
+        (
+            {"market": label, **entry}
+            for label, entry in markets.items()
+            if entry.get("value_bet") and not entry.get("suspicious")
+        ),
         key=lambda x: x["edge"] * confidence,
         reverse=True,
     )
 
-    safest_candidates = {k: v for k, v in markets.items() if k in SAFEST_ELIGIBLE_MARKETS}
+    safest_candidates = {
+        k: v for k, v in markets.items()
+        if k in SAFEST_ELIGIBLE_MARKETS and not v.get("suspicious")
+    }
     safest_market = max(safest_candidates.items(), key=lambda kv: kv[1]["probability"])[0]
 
     return {
