@@ -5,7 +5,8 @@ from engine import analyze_matches
 from combo_builder import build_combo
 
 
-def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list, batch_date: str = None) -> dict:
+def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list,
+                     batch_date: str = None, save: bool = True) -> dict:
     """
     fixtures : liste de dicts {home_team, away_team, odds}, les matchs du jour.
     train_season : saison utilisee pour calculer les forces du modele.
@@ -14,6 +15,10 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list, 
         Ce nom et cette fourchette sont decides par l'appelant (le bot, un autre
         recepteur...), jamais codes en dur ici.
     batch_date : date du batch (par defaut aujourd'hui), utilisee pour les features.
+    save : si False, n'enregistre rien dans predictions (simulation) - l'analyse,
+        les combines et le detail renvoye sont identiques dans les deux cas.
+        Par defaut True, donc le comportement ne change pas pour un appelant
+        qui ne precise pas ce parametre.
     """
     batch_date = batch_date or date.today().isoformat()
 
@@ -28,29 +33,30 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list, 
         for c in combo_definitions
     }
 
-    conn = get_connection()
-    created_at = datetime.now().isoformat()
+    if save:
+        conn = get_connection()
+        created_at = datetime.now().isoformat()
 
-    for m in analyzed:
-        if m["status"] != "ok":
-            continue
-        for market_label, market_data in m["markets"].items():
-            if market_data.get("probability") is None:
+        for m in analyzed:
+            if m["status"] != "ok":
                 continue
-            conn.execute(
-                """
-                INSERT INTO predictions (
-                    created_at, match_date, home_team, away_team,
-                    market, outcome, probability, bookmaker_odds, confidence
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    created_at, batch_date, m["home_team"], m["away_team"],
-                    market_label, market_label, market_data["probability"],
-                    market_data.get("market_odds"), m["confidence"],
-                ),
-            )
-    conn.commit()
+            for market_label, market_data in m["markets"].items():
+                if market_data.get("probability") is None:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO predictions (
+                        created_at, match_date, home_team, away_team,
+                        market, outcome, probability, bookmaker_odds, confidence
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        created_at, batch_date, m["home_team"], m["away_team"],
+                        market_label, market_label, market_data["probability"],
+                        market_data.get("market_odds"), m["confidence"],
+                    ),
+                )
+        conn.commit()
 
     return {
         "batch_date": batch_date,
@@ -58,6 +64,7 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list, 
         "matches_ok": sum(1 for m in analyzed if m["status"] == "ok"),
         "combos": combos,
         "details": analyzed,
+        "saved": save,
     }
 
 

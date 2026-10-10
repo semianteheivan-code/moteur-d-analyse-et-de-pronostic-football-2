@@ -92,6 +92,7 @@ class DailyBatchRequest(BaseModel):
     train_season: Optional[str] = None
     combo_definitions: List[ComboDefinitionInput]
     batch_date: Optional[str] = None  # format "YYYY-MM-DD", par defaut aujourd'hui (Africa/Abidjan)
+    save: bool = True  # False = simulation, n'enregistre rien dans predictions
 
 
 @app.post("/daily-batch")
@@ -100,8 +101,8 @@ def daily_batch(req: DailyBatchRequest):
     Le client ne fournit plus les matchs ni leurs cotes : le moteur recupere
     lui-meme les matchs La Liga du jour demande (ou aujourd'hui par defaut,
     en heure d'Abidjan) et leurs cotes. Le client garde la main sur les
-    fourchettes de combines demandees (combo_definitions) et, s'il le
-    souhaite, sur la date a traiter (batch_date).
+    fourchettes de combines demandees (combo_definitions), la date a traiter
+    (batch_date) et s'il veut enregistrer le resultat ou juste simuler (save).
     """
     if req.batch_date:
         day = datetime.strptime(req.batch_date, "%Y-%m-%d")
@@ -127,4 +128,4 @@ def daily_batch(req: DailyBatchRequest):
     ]
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
-    return run_daily_batch(fixtures, train_season, combo_definitions, batch_date)
+    return run_daily_batch(fixtures, train_season, combo_definitions, batch_date, save=req.save)
