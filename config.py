@@ -28,3 +28,12 @@ REFERENCE_TIMEZONE = "Africa/Abidjan"
 DEFAULT_FIXTURES_DAYS = 3
 FIXTURES_CACHE_TTL_HOURS = 12   # cache du calendrier (change rarement)
 ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
+
+# --- Championnats supportes (etape 5a, A7 - option A) ---
+# Un seul championnat reellement couvert pour l'instant (aucune colonne league
+# dans la base, tout le moteur suppose La Liga implicitement). Ce dictionnaire
+# existe pour que l'API puisse refuser proprement une demande sur un autre
+# championnat, sans deviner ni planter - pas une preparation au support
+# multi-championnat reel (qui reste un chantier separe, option B).
+SUPPORTED_LEAGUES = {"la_liga": "La Liga"}
+DEFAULT_LEAGUE = "la_liga"

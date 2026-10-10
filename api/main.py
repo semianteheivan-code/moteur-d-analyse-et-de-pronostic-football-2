@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 from engine import analyze_match
 from daily_batch import run_daily_batch
 from db.database import get_connection
-from config import DEFAULT_TRAIN_SEASON, DEFAULT_FIXTURES_DAYS, REFERENCE_TIMEZONE
+from config import DEFAULT_TRAIN_SEASON, DEFAULT_FIXTURES_DAYS, REFERENCE_TIMEZONE, SUPPORTED_LEAGUES, DEFAULT_LEAGUE
 from sources.five_dollar_football import (
     get_la_liga_fixtures_cached,
     get_fixture_odds_cached,
@@ -16,10 +16,22 @@ from sources.five_dollar_football import (
 app = FastAPI(title="Moteur de pronostic football - API locale")
 
 
+def _unsupported_league_response(league: str) -> dict:
+    return {
+        "status": "league_not_available",
+        "league": league,
+        "reason": (
+            f"championnat non disponible : '{league}'. "
+            f"Championnats couverts actuellement : {', '.join(SUPPORTED_LEAGUES)}"
+        ),
+    }
+
+
 class MatchRequest(BaseModel):
     home_team: str
     away_team: str
     train_season: Optional[str] = None
+    league: Optional[str] = None
 
 
 @app.get("/health")
@@ -33,7 +45,11 @@ def health():
 
 
 @app.get("/fixtures")
-def fixtures(days: Optional[int] = None):
+def fixtures(days: Optional[int] = None, league: Optional[str] = None):
+    league = (league or DEFAULT_LEAGUE).lower()
+    if league not in SUPPORTED_LEAGUES:
+        return _unsupported_league_response(league)
+
     days = min(days or DEFAULT_FIXTURES_DAYS, 14)  # garde-fou simple contre un usage abusif du quota
     today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
     raw_fixtures = get_la_liga_fixtures_cached(today, days)
@@ -47,7 +63,7 @@ def fixtures(days: Optional[int] = None):
         for fx in raw_fixtures
     ]
     return {
-        "league": "La Liga",
+        "league": SUPPORTED_LEAGUES[league],
         "days": days,
         "reference_date": today.date().isoformat(),
         "fixtures": result,
@@ -64,6 +80,10 @@ def analyze(req: MatchRequest):
     l'equipe qui joue a domicile (l'avantage du terrain change le calcul) :
     si le sens est inverse, le match ne sera pas trouve.
     """
+    league = (req.league or DEFAULT_LEAGUE).lower()
+    if league not in SUPPORTED_LEAGUES:
+        return _unsupported_league_response(league)
+
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
     fx = find_fixture(req.home_team, req.away_team, DEFAULT_FIXTURES_DAYS)
     if fx is None:
@@ -93,6 +113,7 @@ class DailyBatchRequest(BaseModel):
     combo_definitions: List[ComboDefinitionInput]
     batch_date: Optional[str] = None  # format "YYYY-MM-DD", par defaut aujourd'hui (Africa/Abidjan)
     save: bool = True  # False = simulation, n'enregistre rien dans predictions
+    league: Optional[str] = None
 
 
 @app.post("/daily-batch")
@@ -104,6 +125,10 @@ def daily_batch(req: DailyBatchRequest):
     fourchettes de combines demandees (combo_definitions), la date a traiter
     (batch_date) et s'il veut enregistrer le resultat ou juste simuler (save).
     """
+    league = (req.league or DEFAULT_LEAGUE).lower()
+    if league not in SUPPORTED_LEAGUES:
+        return _unsupported_league_response(league)
+
     if req.batch_date:
         day = datetime.strptime(req.batch_date, "%Y-%m-%d")
     else:
