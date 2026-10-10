@@ -168,3 +168,30 @@ def get_fixture_odds_cached(fixture_id: int) -> dict:
 if __name__ == "__main__":
     matches = build_match_requests(datetime(2026, 10, 18, tzinfo=timezone.utc), 1, "2526")
     print(json.dumps(matches, indent=2, ensure_ascii=False))
+def find_fixture(home_team: str, away_team: str, days: int) -> dict | None:
+    """
+    Cherche, dans la fenetre de couverture live (cache), un match ou l'equipe
+    a domicile correspond a home_team et l'equipe a l'exterieur a away_team
+    (comparaison normalisee). En cas de plusieurs correspondances, renvoie
+    celle dont le coup d'envoi est le plus proche. Renvoie None si aucun
+    match ne correspond (le fixture brut de l'API, pas transforme).
+    """
+    from datetime import datetime, timezone
+    from config import REFERENCE_TIMEZONE
+    from zoneinfo import ZoneInfo
+    from sources.team_names import normalize
+
+    today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    fixtures = get_la_liga_fixtures_cached(today, days)
+
+    home_target = normalize(home_team)
+    away_target = normalize(away_team)
+
+    matches = [
+        fx for fx in fixtures
+        if normalize(fx["teams"]["home"]["name"]) == home_target
+        and normalize(fx["teams"]["away"]["name"]) == away_target
+    ]
+    if not matches:
+        return None
+    return min(matches, key=lambda fx: fx["kickoff_utc"])

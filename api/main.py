@@ -7,7 +7,11 @@ from engine import analyze_match
 from daily_batch import run_daily_batch
 from db.database import get_connection
 from config import DEFAULT_TRAIN_SEASON, DEFAULT_FIXTURES_DAYS, REFERENCE_TIMEZONE
-from sources.five_dollar_football import get_la_liga_fixtures_cached, get_fixture_odds_cached
+from sources.five_dollar_football import (
+    get_la_liga_fixtures_cached,
+    get_fixture_odds_cached,
+    find_fixture,
+)
 
 app = FastAPI(title="Moteur de pronostic football - API locale")
 
@@ -23,9 +27,7 @@ class OddsInput(BaseModel):
 class MatchRequest(BaseModel):
     home_team: str
     away_team: str
-    match_date: str
     train_season: Optional[str] = None
-    odds: Optional[OddsInput] = None
 
 
 def _odds_to_dict(odds: Optional[OddsInput]) -> Optional[dict]:
@@ -71,9 +73,30 @@ def fixtures(days: Optional[int] = None):
 
 @app.post("/analyze")
 def analyze(req: MatchRequest):
+    """
+    Le client choisit quel match il veut analyser (home_team/away_team),
+    mais ne fournit jamais ni la date ni les cotes : le moteur retrouve le
+    match lui-meme dans ce qu'il couvre (La Liga, fenetre de DEFAULT_FIXTURES_DAYS
+    jours) et recupere ses cotes automatiquement. home_team doit etre
+    l'equipe qui joue a domicile (l'avantage du terrain change le calcul) :
+    si le sens est inverse, le match ne sera pas trouve.
+    """
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
-    return analyze_match(req.home_team, req.away_team, req.match_date, train_season,
-                          odds=_odds_to_dict(req.odds))
+    fx = find_fixture(req.home_team, req.away_team, DEFAULT_FIXTURES_DAYS)
+    if fx is None:
+        return {
+            "status": "match_not_available",
+            "home_team": req.home_team,
+            "away_team": req.away_team,
+            "reason": (
+                f"aucun match trouve entre ces deux equipes dans les "
+                f"{DEFAULT_FIXTURES_DAYS} prochains jours couverts (La Liga) - "
+                f"verifiez que home_team est bien l'equipe qui recoit"
+            ),
+        }
+    match_date = fx["kickoff_utc"][:10]
+    odds = get_fixture_odds_cached(fx["id"])
+    return analyze_match(req.home_team, req.away_team, match_date, train_season, odds=odds)
 
 
 class FixtureInput(BaseModel):
