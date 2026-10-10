@@ -1,0 +1,944 @@
+{
+    "openapi":  "3.1.0",
+    "info":  {
+                 "title":  "Moteur de pronostic football - API locale",
+                 "version":  "0.1.0"
+             },
+    "paths":  {
+                  "/health":  {
+                                  "get":  {
+                                              "summary":  "Health",
+                                              "operationId":  "health_health_get",
+                                              "responses":  {
+                                                                "200":  {
+                                                                            "description":  "Successful Response",
+                                                                            "content":  {
+                                                                                            "application/json":  {
+                                                                                                                     "schema":  {
+                                                                                                                                    "$ref":  "#/components/schemas/HealthResponse"
+                                                                                                                                }
+                                                                                                                 }
+                                                                                        }
+                                                                        }
+                                                            }
+                                          }
+                              },
+                  "/fixtures":  {
+                                    "get":  {
+                                                "summary":  "Fixtures",
+                                                "operationId":  "fixtures_fixtures_get",
+                                                "parameters":  [
+                                                                   {
+                                                                       "name":  "days",
+                                                                       "in":  "query",
+                                                                       "required":  false,
+                                                                       "schema":  {
+                                                                                      "anyOf":  [
+                                                                                                    {
+                                                                                                        "type":  "integer"
+                                                                                                    },
+                                                                                                    {
+                                                                                                        "type":  "null"
+                                                                                                    }
+                                                                                                ],
+                                                                                      "title":  "Days"
+                                                                                  }
+                                                                   },
+                                                                   {
+                                                                       "name":  "league",
+                                                                       "in":  "query",
+                                                                       "required":  false,
+                                                                       "schema":  {
+                                                                                      "anyOf":  [
+                                                                                                    {
+                                                                                                        "type":  "string"
+                                                                                                    },
+                                                                                                    {
+                                                                                                        "type":  "null"
+                                                                                                    }
+                                                                                                ],
+                                                                                      "title":  "League"
+                                                                                  }
+                                                                   }
+                                                               ],
+                                                "responses":  {
+                                                                  "200":  {
+                                                                              "description":  "Successful Response",
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "anyOf":  [
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/FixturesOkResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/LeagueNotAvailableResponse"
+                                                                                                                                                    }
+                                                                                                                                                ],
+                                                                                                                                      "title":  "Response 200 Fixtures Fixtures Get"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          }
+                                                                          },
+                                                                  "422":  {
+                                                                              "description":  "Validation Error",
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          }
+                                                                          }
+                                                              }
+                                            }
+                                },
+                  "/analyze":  {
+                                   "post":  {
+                                                "summary":  "Analyze",
+                                                "description":  "Le client choisit quel match il veut analyser (home_team/away_team),\nmais ne fournit jamais ni la date ni les cotes : le moteur retrouve le\nmatch lui-meme dans ce qu\u0027il couvre (La Liga, fenetre de DEFAULT_FIXTURES_DAYS\njours) et recupere ses cotes automatiquement. home_team doit etre\nl\u0027equipe qui joue a domicile (l\u0027avantage du terrain change le calcul) :\nsi le sens est inverse, le match ne sera pas trouve.\n\nStatuts possibles : ok, match_not_available, league_not_available,\nunknown_team, insufficient_history, refused (ces trois derniers viennent\nde engine.analyze_match - voir sa docstring pour leurs conditions exactes).",
+                                                "operationId":  "analyze_analyze_post",
+                                                "requestBody":  {
+                                                                    "content":  {
+                                                                                    "application/json":  {
+                                                                                                             "schema":  {
+                                                                                                                            "$ref":  "#/components/schemas/MatchRequest"
+                                                                                                                        }
+                                                                                                         }
+                                                                                },
+                                                                    "required":  true
+                                                                },
+                                                "responses":  {
+                                                                  "200":  {
+                                                                              "description":  "Successful Response",
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "anyOf":  [
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/AnalyzeOkResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/MatchNotAvailableResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/LeagueNotAvailableResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/UnknownTeamResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/InsufficientHistoryResponse"
+                                                                                                                                                    },
+                                                                                                                                                    {
+                                                                                                                                                        "$ref":  "#/components/schemas/RefusedResponse"
+                                                                                                                                                    }
+                                                                                                                                                ],
+                                                                                                                                      "title":  "Response 200 Analyze Analyze Post"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          }
+                                                                          },
+                                                                  "422":  {
+                                                                              "description":  "Validation Error",
+                                                                              "content":  {
+                                                                                              "application/json":  {
+                                                                                                                       "schema":  {
+                                                                                                                                      "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                  }
+                                                                                                                   }
+                                                                                          }
+                                                                          }
+                                                              }
+                                            }
+                               },
+                  "/daily-batch":  {
+                                       "post":  {
+                                                    "summary":  "Daily Batch",
+                                                    "description":  "Le client ne fournit plus les matchs ni leurs cotes : le moteur recupere\nlui-meme les matchs La Liga du jour demande (ou aujourd\u0027hui par defaut,\nen heure d\u0027Abidjan) et leurs cotes. Le client garde la main sur les\nfourchettes de combines demandees (combo_definitions), la date a traiter\n(batch_date) et s\u0027il veut enregistrer le resultat ou juste simuler (save).",
+                                                    "operationId":  "daily_batch_daily_batch_post",
+                                                    "requestBody":  {
+                                                                        "content":  {
+                                                                                        "application/json":  {
+                                                                                                                 "schema":  {
+                                                                                                                                "$ref":  "#/components/schemas/DailyBatchRequest"
+                                                                                                                            }
+                                                                                                             }
+                                                                                    },
+                                                                        "required":  true
+                                                                    },
+                                                    "responses":  {
+                                                                      "200":  {
+                                                                                  "description":  "Successful Response",
+                                                                                  "content":  {
+                                                                                                  "application/json":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "anyOf":  [
+                                                                                                                                                        {
+                                                                                                                                                            "$ref":  "#/components/schemas/DailyBatchOkResponse"
+                                                                                                                                                        },
+                                                                                                                                                        {
+                                                                                                                                                            "$ref":  "#/components/schemas/NoMatchesAvailableResponse"
+                                                                                                                                                        },
+                                                                                                                                                        {
+                                                                                                                                                            "$ref":  "#/components/schemas/LeagueNotAvailableResponse"
+                                                                                                                                                        }
+                                                                                                                                                    ],
+                                                                                                                                          "title":  "Response 200 Daily Batch Daily Batch Post"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                              }
+                                                                              },
+                                                                      "422":  {
+                                                                                  "description":  "Validation Error",
+                                                                                  "content":  {
+                                                                                                  "application/json":  {
+                                                                                                                           "schema":  {
+                                                                                                                                          "$ref":  "#/components/schemas/HTTPValidationError"
+                                                                                                                                      }
+                                                                                                                       }
+                                                                                              }
+                                                                              }
+                                                                  }
+                                                }
+                                   }
+              },
+    "components":  {
+                       "schemas":  {
+                                       "AnalyzeOkResponse":  {
+                                                                 "properties":  {
+                                                                                    "status":  {
+                                                                                                   "type":  "string",
+                                                                                                   "title":  "Status"
+                                                                                               },
+                                                                                    "home_team":  {
+                                                                                                      "type":  "string",
+                                                                                                      "title":  "Home Team"
+                                                                                                  },
+                                                                                    "away_team":  {
+                                                                                                      "type":  "string",
+                                                                                                      "title":  "Away Team"
+                                                                                                  },
+                                                                                    "match_date":  {
+                                                                                                       "type":  "string",
+                                                                                                       "title":  "Match Date"
+                                                                                                   },
+                                                                                    "confidence":  {
+                                                                                                       "type":  "number",
+                                                                                                       "title":  "Confidence"
+                                                                                                   },
+                                                                                    "markets":  {
+                                                                                                    "additionalProperties":  {
+                                                                                                                                 "$ref":  "#/components/schemas/MarketEntry"
+                                                                                                                             },
+                                                                                                    "type":  "object",
+                                                                                                    "title":  "Markets"
+                                                                                                },
+                                                                                    "opportunities_sorted_by_edge":  {
+                                                                                                                         "items":  {
+                                                                                                                                       "$ref":  "#/components/schemas/OpportunityEntry"
+                                                                                                                                   },
+                                                                                                                         "type":  "array",
+                                                                                                                         "title":  "Opportunities Sorted By Edge"
+                                                                                                                     },
+                                                                                    "safest_market":  {
+                                                                                                          "type":  "string",
+                                                                                                          "title":  "Safest Market"
+                                                                                                      }
+                                                                                },
+                                                                 "type":  "object",
+                                                                 "required":  [
+                                                                                  "status",
+                                                                                  "home_team",
+                                                                                  "away_team",
+                                                                                  "match_date",
+                                                                                  "confidence",
+                                                                                  "markets",
+                                                                                  "opportunities_sorted_by_edge",
+                                                                                  "safest_market"
+                                                                              ],
+                                                                 "title":  "AnalyzeOkResponse"
+                                                             },
+                                       "ComboDefinitionInput":  {
+                                                                    "properties":  {
+                                                                                       "name":  {
+                                                                                                    "type":  "string",
+                                                                                                    "title":  "Name"
+                                                                                                },
+                                                                                       "min_odds":  {
+                                                                                                        "type":  "number",
+                                                                                                        "title":  "Min Odds"
+                                                                                                    },
+                                                                                       "max_odds":  {
+                                                                                                        "type":  "number",
+                                                                                                        "title":  "Max Odds"
+                                                                                                    }
+                                                                                   },
+                                                                    "type":  "object",
+                                                                    "required":  [
+                                                                                     "name",
+                                                                                     "min_odds",
+                                                                                     "max_odds"
+                                                                                 ],
+                                                                    "title":  "ComboDefinitionInput"
+                                                                },
+                                       "ComboResult":  {
+                                                           "properties":  {
+                                                                              "status":  {
+                                                                                             "type":  "string",
+                                                                                             "title":  "Status"
+                                                                                         },
+                                                                              "selections":  {
+                                                                                                 "anyOf":  [
+                                                                                                               {
+                                                                                                                   "items":  {
+
+                                                                                                                             },
+                                                                                                                   "type":  "array"
+                                                                                                               },
+                                                                                                               {
+                                                                                                                   "type":  "null"
+                                                                                                               }
+                                                                                                           ],
+                                                                                                 "title":  "Selections"
+                                                                                             },
+                                                                              "total_odds":  {
+                                                                                                 "anyOf":  [
+                                                                                                               {
+                                                                                                                   "type":  "number"
+                                                                                                               },
+                                                                                                               {
+                                                                                                                   "type":  "null"
+                                                                                                               }
+                                                                                                           ],
+                                                                                                 "title":  "Total Odds"
+                                                                                             },
+                                                                              "combined_probability":  {
+                                                                                                           "anyOf":  [
+                                                                                                                         {
+                                                                                                                             "type":  "number"
+                                                                                                                         },
+                                                                                                                         {
+                                                                                                                             "type":  "null"
+                                                                                                                         }
+                                                                                                                     ],
+                                                                                                           "title":  "Combined Probability"
+                                                                                                       },
+                                                                              "reason":  {
+                                                                                             "anyOf":  [
+                                                                                                           {
+                                                                                                               "type":  "string"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "type":  "null"
+                                                                                                           }
+                                                                                                       ],
+                                                                                             "title":  "Reason"
+                                                                                         }
+                                                                          },
+                                                           "type":  "object",
+                                                           "required":  [
+                                                                            "status"
+                                                                        ],
+                                                           "title":  "ComboResult"
+                                                       },
+                                       "DailyBatchOkResponse":  {
+                                                                    "properties":  {
+                                                                                       "batch_date":  {
+                                                                                                          "type":  "string",
+                                                                                                          "title":  "Batch Date"
+                                                                                                      },
+                                                                                       "matches_analyzed":  {
+                                                                                                                "type":  "integer",
+                                                                                                                "title":  "Matches Analyzed"
+                                                                                                            },
+                                                                                       "matches_ok":  {
+                                                                                                          "type":  "integer",
+                                                                                                          "title":  "Matches Ok"
+                                                                                                      },
+                                                                                       "combos":  {
+                                                                                                      "additionalProperties":  {
+                                                                                                                                   "$ref":  "#/components/schemas/ComboResult"
+                                                                                                                               },
+                                                                                                      "type":  "object",
+                                                                                                      "title":  "Combos"
+                                                                                                  },
+                                                                                       "details":  {
+                                                                                                       "items":  {
+                                                                                                                     "additionalProperties":  true,
+                                                                                                                     "type":  "object"
+                                                                                                                 },
+                                                                                                       "type":  "array",
+                                                                                                       "title":  "Details"
+                                                                                                   },
+                                                                                       "saved":  {
+                                                                                                     "type":  "boolean",
+                                                                                                     "title":  "Saved"
+                                                                                                 }
+                                                                                   },
+                                                                    "type":  "object",
+                                                                    "required":  [
+                                                                                     "batch_date",
+                                                                                     "matches_analyzed",
+                                                                                     "matches_ok",
+                                                                                     "combos",
+                                                                                     "details",
+                                                                                     "saved"
+                                                                                 ],
+                                                                    "title":  "DailyBatchOkResponse"
+                                                                },
+                                       "DailyBatchRequest":  {
+                                                                 "properties":  {
+                                                                                    "train_season":  {
+                                                                                                         "anyOf":  [
+                                                                                                                       {
+                                                                                                                           "type":  "string"
+                                                                                                                       },
+                                                                                                                       {
+                                                                                                                           "type":  "null"
+                                                                                                                       }
+                                                                                                                   ],
+                                                                                                         "title":  "Train Season"
+                                                                                                     },
+                                                                                    "combo_definitions":  {
+                                                                                                              "items":  {
+                                                                                                                            "$ref":  "#/components/schemas/ComboDefinitionInput"
+                                                                                                                        },
+                                                                                                              "type":  "array",
+                                                                                                              "title":  "Combo Definitions"
+                                                                                                          },
+                                                                                    "batch_date":  {
+                                                                                                       "anyOf":  [
+                                                                                                                     {
+                                                                                                                         "type":  "string"
+                                                                                                                     },
+                                                                                                                     {
+                                                                                                                         "type":  "null"
+                                                                                                                     }
+                                                                                                                 ],
+                                                                                                       "title":  "Batch Date"
+                                                                                                   },
+                                                                                    "save":  {
+                                                                                                 "type":  "boolean",
+                                                                                                 "title":  "Save",
+                                                                                                 "default":  true
+                                                                                             },
+                                                                                    "league":  {
+                                                                                                   "anyOf":  [
+                                                                                                                 {
+                                                                                                                     "type":  "string"
+                                                                                                                 },
+                                                                                                                 {
+                                                                                                                     "type":  "null"
+                                                                                                                 }
+                                                                                                             ],
+                                                                                                   "title":  "League"
+                                                                                               }
+                                                                                },
+                                                                 "type":  "object",
+                                                                 "required":  [
+                                                                                  "combo_definitions"
+                                                                              ],
+                                                                 "title":  "DailyBatchRequest"
+                                                             },
+                                       "FixtureItem":  {
+                                                           "properties":  {
+                                                                              "home_team":  {
+                                                                                                "type":  "string",
+                                                                                                "title":  "Home Team"
+                                                                                            },
+                                                                              "away_team":  {
+                                                                                                "type":  "string",
+                                                                                                "title":  "Away Team"
+                                                                                            },
+                                                                              "kickoff_utc":  {
+                                                                                                  "type":  "string",
+                                                                                                  "title":  "Kickoff Utc"
+                                                                                              },
+                                                                              "odds":  {
+                                                                                           "additionalProperties":  {
+                                                                                                                        "type":  "number"
+                                                                                                                    },
+                                                                                           "type":  "object",
+                                                                                           "title":  "Odds"
+                                                                                       }
+                                                                          },
+                                                           "type":  "object",
+                                                           "required":  [
+                                                                            "home_team",
+                                                                            "away_team",
+                                                                            "kickoff_utc",
+                                                                            "odds"
+                                                                        ],
+                                                           "title":  "FixtureItem"
+                                                       },
+                                       "FixturesOkResponse":  {
+                                                                  "properties":  {
+                                                                                     "league":  {
+                                                                                                    "type":  "string",
+                                                                                                    "title":  "League"
+                                                                                                },
+                                                                                     "days":  {
+                                                                                                  "type":  "integer",
+                                                                                                  "title":  "Days"
+                                                                                              },
+                                                                                     "reference_date":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "Reference Date"
+                                                                                                        },
+                                                                                     "fixtures":  {
+                                                                                                      "items":  {
+                                                                                                                    "$ref":  "#/components/schemas/FixtureItem"
+                                                                                                                },
+                                                                                                      "type":  "array",
+                                                                                                      "title":  "Fixtures"
+                                                                                                  }
+                                                                                 },
+                                                                  "type":  "object",
+                                                                  "required":  [
+                                                                                   "league",
+                                                                                   "days",
+                                                                                   "reference_date",
+                                                                                   "fixtures"
+                                                                               ],
+                                                                  "title":  "FixturesOkResponse"
+                                                              },
+                                       "HTTPValidationError":  {
+                                                                   "properties":  {
+                                                                                      "detail":  {
+                                                                                                     "items":  {
+                                                                                                                   "$ref":  "#/components/schemas/ValidationError"
+                                                                                                               },
+                                                                                                     "type":  "array",
+                                                                                                     "title":  "Detail"
+                                                                                                 }
+                                                                                  },
+                                                                   "type":  "object",
+                                                                   "title":  "HTTPValidationError"
+                                                               },
+                                       "HealthResponse":  {
+                                                              "properties":  {
+                                                                                 "status":  {
+                                                                                                "type":  "string",
+                                                                                                "title":  "Status"
+                                                                                            },
+                                                                                 "last_match_date_in_db":  {
+                                                                                                               "anyOf":  [
+                                                                                                                             {
+                                                                                                                                 "type":  "string"
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "type":  "null"
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                               "title":  "Last Match Date In Db"
+                                                                                                           }
+                                                                             },
+                                                              "type":  "object",
+                                                              "required":  [
+                                                                               "status"
+                                                                           ],
+                                                              "title":  "HealthResponse"
+                                                          },
+                                       "InsufficientHistoryResponse":  {
+                                                                           "properties":  {
+                                                                                              "status":  {
+                                                                                                             "type":  "string",
+                                                                                                             "title":  "Status"
+                                                                                                         },
+                                                                                              "home_team":  {
+                                                                                                                "type":  "string",
+                                                                                                                "title":  "Home Team"
+                                                                                                            },
+                                                                                              "away_team":  {
+                                                                                                                "type":  "string",
+                                                                                                                "title":  "Away Team"
+                                                                                                            },
+                                                                                              "train_season":  {
+                                                                                                                   "type":  "string",
+                                                                                                                   "title":  "Train Season"
+                                                                                                               },
+                                                                                              "reason":  {
+                                                                                                             "type":  "string",
+                                                                                                             "title":  "Reason"
+                                                                                                         }
+                                                                                          },
+                                                                           "type":  "object",
+                                                                           "required":  [
+                                                                                            "status",
+                                                                                            "home_team",
+                                                                                            "away_team",
+                                                                                            "train_season",
+                                                                                            "reason"
+                                                                                        ],
+                                                                           "title":  "InsufficientHistoryResponse"
+                                                                       },
+                                       "LeagueNotAvailableResponse":  {
+                                                                          "properties":  {
+                                                                                             "status":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "Status"
+                                                                                                        },
+                                                                                             "league":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "League"
+                                                                                                        },
+                                                                                             "reason":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "Reason"
+                                                                                                        }
+                                                                                         },
+                                                                          "type":  "object",
+                                                                          "required":  [
+                                                                                           "status",
+                                                                                           "league",
+                                                                                           "reason"
+                                                                                       ],
+                                                                          "title":  "LeagueNotAvailableResponse"
+                                                                      },
+                                       "MarketEntry":  {
+                                                           "properties":  {
+                                                                              "probability":  {
+                                                                                                  "anyOf":  [
+                                                                                                                {
+                                                                                                                    "type":  "number"
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type":  "null"
+                                                                                                                }
+                                                                                                            ],
+                                                                                                  "title":  "Probability"
+                                                                                              },
+                                                                              "market_odds":  {
+                                                                                                  "anyOf":  [
+                                                                                                                {
+                                                                                                                    "type":  "number"
+                                                                                                                },
+                                                                                                                {
+                                                                                                                    "type":  "null"
+                                                                                                                }
+                                                                                                            ],
+                                                                                                  "title":  "Market Odds"
+                                                                                              },
+                                                                              "market_implied_probability":  {
+                                                                                                                 "anyOf":  [
+                                                                                                                               {
+                                                                                                                                   "type":  "number"
+                                                                                                                               },
+                                                                                                                               {
+                                                                                                                                   "type":  "null"
+                                                                                                                               }
+                                                                                                                           ],
+                                                                                                                 "title":  "Market Implied Probability"
+                                                                                                             },
+                                                                              "edge":  {
+                                                                                           "anyOf":  [
+                                                                                                         {
+                                                                                                             "type":  "number"
+                                                                                                         },
+                                                                                                         {
+                                                                                                             "type":  "null"
+                                                                                                         }
+                                                                                                     ],
+                                                                                           "title":  "Edge"
+                                                                                       },
+                                                                              "value_bet":  {
+                                                                                                "anyOf":  [
+                                                                                                              {
+                                                                                                                  "type":  "boolean"
+                                                                                                              },
+                                                                                                              {
+                                                                                                                  "type":  "null"
+                                                                                                              }
+                                                                                                          ],
+                                                                                                "title":  "Value Bet"
+                                                                                            },
+                                                                              "expected_total":  {
+                                                                                                     "anyOf":  [
+                                                                                                                   {
+                                                                                                                       "type":  "number"
+                                                                                                                   },
+                                                                                                                   {
+                                                                                                                       "type":  "null"
+                                                                                                                   }
+                                                                                                               ],
+                                                                                                     "title":  "Expected Total"
+                                                                                                 }
+                                                                          },
+                                                           "type":  "object",
+                                                           "title":  "MarketEntry"
+                                                       },
+                                       "MatchNotAvailableResponse":  {
+                                                                         "properties":  {
+                                                                                            "status":  {
+                                                                                                           "type":  "string",
+                                                                                                           "title":  "Status"
+                                                                                                       },
+                                                                                            "home_team":  {
+                                                                                                              "type":  "string",
+                                                                                                              "title":  "Home Team"
+                                                                                                          },
+                                                                                            "away_team":  {
+                                                                                                              "type":  "string",
+                                                                                                              "title":  "Away Team"
+                                                                                                          },
+                                                                                            "reason":  {
+                                                                                                           "type":  "string",
+                                                                                                           "title":  "Reason"
+                                                                                                       }
+                                                                                        },
+                                                                         "type":  "object",
+                                                                         "required":  [
+                                                                                          "status",
+                                                                                          "home_team",
+                                                                                          "away_team",
+                                                                                          "reason"
+                                                                                      ],
+                                                                         "title":  "MatchNotAvailableResponse"
+                                                                     },
+                                       "MatchRequest":  {
+                                                            "properties":  {
+                                                                               "home_team":  {
+                                                                                                 "type":  "string",
+                                                                                                 "title":  "Home Team"
+                                                                                             },
+                                                                               "away_team":  {
+                                                                                                 "type":  "string",
+                                                                                                 "title":  "Away Team"
+                                                                                             },
+                                                                               "train_season":  {
+                                                                                                    "anyOf":  [
+                                                                                                                  {
+                                                                                                                      "type":  "string"
+                                                                                                                  },
+                                                                                                                  {
+                                                                                                                      "type":  "null"
+                                                                                                                  }
+                                                                                                              ],
+                                                                                                    "title":  "Train Season"
+                                                                                                },
+                                                                               "league":  {
+                                                                                              "anyOf":  [
+                                                                                                            {
+                                                                                                                "type":  "string"
+                                                                                                            },
+                                                                                                            {
+                                                                                                                "type":  "null"
+                                                                                                            }
+                                                                                                        ],
+                                                                                              "title":  "League"
+                                                                                          }
+                                                                           },
+                                                            "type":  "object",
+                                                            "required":  [
+                                                                             "home_team",
+                                                                             "away_team"
+                                                                         ],
+                                                            "title":  "MatchRequest"
+                                                        },
+                                       "NoMatchesAvailableResponse":  {
+                                                                          "properties":  {
+                                                                                             "status":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "Status"
+                                                                                                        },
+                                                                                             "batch_date":  {
+                                                                                                                "type":  "string",
+                                                                                                                "title":  "Batch Date"
+                                                                                                            },
+                                                                                             "reason":  {
+                                                                                                            "type":  "string",
+                                                                                                            "title":  "Reason"
+                                                                                                        }
+                                                                                         },
+                                                                          "type":  "object",
+                                                                          "required":  [
+                                                                                           "status",
+                                                                                           "batch_date",
+                                                                                           "reason"
+                                                                                       ],
+                                                                          "title":  "NoMatchesAvailableResponse"
+                                                                      },
+                                       "OpportunityEntry":  {
+                                                                "properties":  {
+                                                                                   "probability":  {
+                                                                                                       "anyOf":  [
+                                                                                                                     {
+                                                                                                                         "type":  "number"
+                                                                                                                     },
+                                                                                                                     {
+                                                                                                                         "type":  "null"
+                                                                                                                     }
+                                                                                                                 ],
+                                                                                                       "title":  "Probability"
+                                                                                                   },
+                                                                                   "market_odds":  {
+                                                                                                       "anyOf":  [
+                                                                                                                     {
+                                                                                                                         "type":  "number"
+                                                                                                                     },
+                                                                                                                     {
+                                                                                                                         "type":  "null"
+                                                                                                                     }
+                                                                                                                 ],
+                                                                                                       "title":  "Market Odds"
+                                                                                                   },
+                                                                                   "market_implied_probability":  {
+                                                                                                                      "anyOf":  [
+                                                                                                                                    {
+                                                                                                                                        "type":  "number"
+                                                                                                                                    },
+                                                                                                                                    {
+                                                                                                                                        "type":  "null"
+                                                                                                                                    }
+                                                                                                                                ],
+                                                                                                                      "title":  "Market Implied Probability"
+                                                                                                                  },
+                                                                                   "edge":  {
+                                                                                                "anyOf":  [
+                                                                                                              {
+                                                                                                                  "type":  "number"
+                                                                                                              },
+                                                                                                              {
+                                                                                                                  "type":  "null"
+                                                                                                              }
+                                                                                                          ],
+                                                                                                "title":  "Edge"
+                                                                                            },
+                                                                                   "value_bet":  {
+                                                                                                     "anyOf":  [
+                                                                                                                   {
+                                                                                                                       "type":  "boolean"
+                                                                                                                   },
+                                                                                                                   {
+                                                                                                                       "type":  "null"
+                                                                                                                   }
+                                                                                                               ],
+                                                                                                     "title":  "Value Bet"
+                                                                                                 },
+                                                                                   "expected_total":  {
+                                                                                                          "anyOf":  [
+                                                                                                                        {
+                                                                                                                            "type":  "number"
+                                                                                                                        },
+                                                                                                                        {
+                                                                                                                            "type":  "null"
+                                                                                                                        }
+                                                                                                                    ],
+                                                                                                          "title":  "Expected Total"
+                                                                                                      },
+                                                                                   "market":  {
+                                                                                                  "type":  "string",
+                                                                                                  "title":  "Market"
+                                                                                              }
+                                                                               },
+                                                                "type":  "object",
+                                                                "required":  [
+                                                                                 "market"
+                                                                             ],
+                                                                "title":  "OpportunityEntry"
+                                                            },
+                                       "RefusedResponse":  {
+                                                               "properties":  {
+                                                                                  "status":  {
+                                                                                                 "type":  "string",
+                                                                                                 "title":  "Status"
+                                                                                             },
+                                                                                  "home_team":  {
+                                                                                                    "type":  "string",
+                                                                                                    "title":  "Home Team"
+                                                                                                },
+                                                                                  "away_team":  {
+                                                                                                    "type":  "string",
+                                                                                                    "title":  "Away Team"
+                                                                                                },
+                                                                                  "reason":  {
+                                                                                                 "type":  "string",
+                                                                                                 "title":  "Reason"
+                                                                                             },
+                                                                                  "confidence":  {
+                                                                                                     "type":  "number",
+                                                                                                     "title":  "Confidence"
+                                                                                                 }
+                                                                              },
+                                                               "type":  "object",
+                                                               "required":  [
+                                                                                "status",
+                                                                                "home_team",
+                                                                                "away_team",
+                                                                                "reason",
+                                                                                "confidence"
+                                                                            ],
+                                                               "title":  "RefusedResponse"
+                                                           },
+                                       "UnknownTeamResponse":  {
+                                                                   "properties":  {
+                                                                                      "status":  {
+                                                                                                     "type":  "string",
+                                                                                                     "title":  "Status"
+                                                                                                 },
+                                                                                      "home_team":  {
+                                                                                                        "type":  "string",
+                                                                                                        "title":  "Home Team"
+                                                                                                    },
+                                                                                      "away_team":  {
+                                                                                                        "type":  "string",
+                                                                                                        "title":  "Away Team"
+                                                                                                    },
+                                                                                      "reason":  {
+                                                                                                     "type":  "string",
+                                                                                                     "title":  "Reason"
+                                                                                                 }
+                                                                                  },
+                                                                   "type":  "object",
+                                                                   "required":  [
+                                                                                    "status",
+                                                                                    "home_team",
+                                                                                    "away_team",
+                                                                                    "reason"
+                                                                                ],
+                                                                   "title":  "UnknownTeamResponse"
+                                                               },
+                                       "ValidationError":  {
+                                                               "properties":  {
+                                                                                  "loc":  {
+                                                                                              "items":  {
+                                                                                                            "anyOf":  [
+                                                                                                                          {
+                                                                                                                              "type":  "string"
+                                                                                                                          },
+                                                                                                                          {
+                                                                                                                              "type":  "integer"
+                                                                                                                          }
+                                                                                                                      ]
+                                                                                                        },
+                                                                                              "type":  "array",
+                                                                                              "title":  "Location"
+                                                                                          },
+                                                                                  "msg":  {
+                                                                                              "type":  "string",
+                                                                                              "title":  "Message"
+                                                                                          },
+                                                                                  "type":  {
+                                                                                               "type":  "string",
+                                                                                               "title":  "Error Type"
+                                                                                           },
+                                                                                  "input":  {
+                                                                                                "title":  "Input"
+                                                                                            },
+                                                                                  "ctx":  {
+                                                                                              "type":  "object",
+                                                                                              "title":  "Context"
+                                                                                          }
+                                                                              },
+                                                               "type":  "object",
+                                                               "required":  [
+                                                                                "loc",
+                                                                                "msg",
+                                                                                "type"
+                                                                            ],
+                                                               "title":  "ValidationError"
+                                                           }
+                                   }
+                   }
+}
