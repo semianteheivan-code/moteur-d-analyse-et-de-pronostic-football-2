@@ -37,3 +37,10 @@ ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 # multi-championnat reel (qui reste un chantier separe, option B).
 SUPPORTED_LEAGUES = {"la_liga": "La Liga"}
 DEFAULT_LEAGUE = "la_liga"
+
+# --- Protection de quota (etape 9) ---
+# Le fournisseur (5DollarFootballAPI) annonce 60 requetes/heure. On se fixe une
+# limite configurable plus basse par securite (marge pour eviter de taper pile
+# la limite reelle du fournisseur).
+API_QUOTA_LIMIT_PER_HOUR = 50
+API_QUOTA_WINDOW_MINUTES = 60

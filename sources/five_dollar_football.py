@@ -3,12 +3,57 @@ import json
 
 import requests
 from config_secrets import FIVEDOLLAR_API_KEY
-from config import FIXTURES_CACHE_TTL_HOURS, ODDS_CACHE_TTL_HOURS
+from config import FIXTURES_CACHE_TTL_HOURS, ODDS_CACHE_TTL_HOURS, API_QUOTA_LIMIT_PER_HOUR, API_QUOTA_WINDOW_MINUTES
 from db.database import get_connection
 
 BASE_URL = "https://api.5dollarfootballapi.com/v1"
 HEADERS = {"Authorization": f"Bearer {FIVEDOLLAR_API_KEY}"}
 LA_LIGA_ID = 4212821298
+
+
+class QuotaExceededError(Exception):
+    """Levee quand le quota de requetes reseau serait depasse (etape 9).
+    Aucun appel reseau n'est effectue quand cette exception est levee."""
+    pass
+
+
+def _check_and_record_quota() -> None:
+    """
+    Verifie le nombre de requetes reseau reelles effectuees dans la fenetre
+    glissante (API_QUOTA_WINDOW_MINUTES) et enregistre la requete en cours si
+    la limite (API_QUOTA_LIMIT_PER_HOUR) n'est pas atteinte. Atomique via une
+    transaction SQLite (BEGIN IMMEDIATE) pour eviter qu'un depassement passe
+    entre deux appels concurrents.
+    """
+    conn = get_connection()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(minutes=API_QUOTA_WINDOW_MINUTES)).isoformat()
+
+    conn.execute("BEGIN IMMEDIATE")
+    count = conn.execute(
+        "SELECT COUNT(*) FROM api_requests WHERE requested_at > ?", (cutoff,)
+    ).fetchone()[0]
+
+    if count >= API_QUOTA_LIMIT_PER_HOUR:
+        conn.rollback()
+        raise QuotaExceededError(
+            f"Quota atteint : {count}/{API_QUOTA_LIMIT_PER_HOUR} requetes "
+            f"sur les {API_QUOTA_WINDOW_MINUTES} dernieres minutes"
+        )
+
+    conn.execute("INSERT INTO api_requests (requested_at) VALUES (?)", (now.isoformat(),))
+    conn.commit()
+
+
+def _api_get(url: str, params: dict = None):
+    """
+    Point d'entree unique pour tout appel reseau reel vers 5DollarFootballAPI.
+    Verifie et enregistre le quota de maniere atomique avant d'appeler l'API ;
+    leve QuotaExceededError sans faire d'appel reseau si la limite serait
+    depassee. Sinon, comportement identique a requests.get (etape 9).
+    """
+    _check_and_record_quota()
+    return requests.get(url, params=params, headers=HEADERS)
 
 
 def _day_bounds(day: datetime) -> tuple:
@@ -24,10 +69,9 @@ def get_la_liga_fixtures(start_date: datetime, num_days: int) -> list:
     for offset in range(num_days):
         day = start_date + timedelta(days=offset)
         start_ts, end_ts = _day_bounds(day)
-        response = requests.get(
+        response = _api_get(
             f"{BASE_URL}/fixtures",
             params={"league": LA_LIGA_ID, "start_time": start_ts, "end_time": end_ts},
-            headers=HEADERS,
         )
         response.raise_for_status()
         all_fixtures.extend(response.json().get("data", []))
@@ -49,7 +93,7 @@ def get_fixture_odds(fixture_id: int) -> dict:
     """
     odds = {}
 
-    r_1x2 = requests.get(f"{BASE_URL}/fixtures/{fixture_id}/odds", params={"market": "1x2"}, headers=HEADERS)
+    r_1x2 = _api_get(f"{BASE_URL}/fixtures/{fixture_id}/odds", params={"market": "1x2"})
     if r_1x2.status_code == 200:
         closing = _extract_bet365(r_1x2.json()).get("1x2", {}).get("closing")
         if closing:
@@ -57,7 +101,7 @@ def get_fixture_odds(fixture_id: int) -> dict:
             odds["X"] = closing.get("draw")
             odds["2"] = closing.get("away")
 
-    r_goals = requests.get(f"{BASE_URL}/fixtures/{fixture_id}/odds", params={"market": "goal_line"}, headers=HEADERS)
+    r_goals = _api_get(f"{BASE_URL}/fixtures/{fixture_id}/odds", params={"market": "goal_line"})
     if r_goals.status_code == 200:
         closing = _extract_bet365(r_goals.json()).get("goal_line", {}).get("closing")
         # On ignore la cote si la ligne du bookmaker n'est pas 2.5 : une cote sur
@@ -94,10 +138,9 @@ def get_fixtures_for_daily_batch(day: datetime) -> list:
     attendu par daily_batch.run_daily_batch : {home_team, away_team, odds}.
     """
     start_ts, end_ts = _day_bounds(day)
-    response = requests.get(
+    response = _api_get(
         f"{BASE_URL}/fixtures",
         params={"league": LA_LIGA_ID, "start_time": start_ts, "end_time": end_ts},
-        headers=HEADERS,
     )
     response.raise_for_status()
     fixtures = response.json().get("data", [])

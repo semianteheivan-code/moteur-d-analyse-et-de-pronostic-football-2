@@ -1,4 +1,4 @@
-import sqlite3
+﻿import sqlite3
 from config import DB_PATH
 
 SCHEMA = """
@@ -56,6 +56,15 @@ CREATE TABLE IF NOT EXISTS predictions (
     confidence REAL,
     actual_result TEXT
 );
+
+-- Etape 9 : compteur de requetes reseau reelles vers l'API live, une ligne par appel,
+-- pour calculer une fenetre glissante (COUNT(*) WHERE requested_at > maintenant - fenetre).
+CREATE TABLE IF NOT EXISTS api_requests (
+    id INTEGER PRIMARY KEY,
+    requested_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_requests_requested_at ON api_requests(requested_at);
 """
 
 

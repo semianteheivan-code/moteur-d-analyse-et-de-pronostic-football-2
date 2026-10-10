@@ -11,6 +11,7 @@ from sources.five_dollar_football import (
     get_la_liga_fixtures_cached,
     get_fixture_odds_cached,
     find_fixture,
+    QuotaExceededError,
 )
 
 app = FastAPI(title="Moteur de pronostic football - API locale")
@@ -49,12 +50,21 @@ class LeagueNotAvailableResponse(BaseModel):
     reason: str
 
 
+class QuotaExceededResponse(BaseModel):
+    # Etape 9 : jamais observe via /docs au moment de la declaration (declenche
+    # en simulant un quota deja atteint, pas via un vrai depassement en direct -
+    # voir le registre de decisions de la feuille de route).
+    status: str
+    reason: str
+
+
 class MarketEntry(BaseModel):
     probability: Optional[float] = None
     market_odds: Optional[float] = None
     market_implied_probability: Optional[float] = None
     edge: Optional[float] = None
     value_bet: Optional[bool] = None
+    suspicious: Optional[bool] = None
     expected_total: Optional[float] = None
 
 
@@ -142,6 +152,13 @@ def _unsupported_league_response(league: str) -> dict:
     }
 
 
+def _quota_exceeded_response(exc: QuotaExceededError) -> dict:
+    return {
+        "status": "quota_exceeded",
+        "reason": str(exc),
+    }
+
+
 class MatchRequest(BaseModel):
     home_team: str
     away_team: str
@@ -161,7 +178,7 @@ def health():
 
 @app.get(
     "/fixtures",
-    responses={200: {"model": Union[FixturesOkResponse, LeagueNotAvailableResponse]}},
+    responses={200: {"model": Union[FixturesOkResponse, LeagueNotAvailableResponse, QuotaExceededResponse]}},
 )
 def fixtures(days: Optional[int] = None, league: Optional[str] = None):
     league = (league or DEFAULT_LEAGUE).lower()
@@ -170,16 +187,19 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
 
     days = min(days or DEFAULT_FIXTURES_DAYS, 14)  # garde-fou simple contre un usage abusif du quota
     today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
-    raw_fixtures = get_la_liga_fixtures_cached(today, days)
-    result = [
-        {
-            "home_team": fx["teams"]["home"]["name"],
-            "away_team": fx["teams"]["away"]["name"],
-            "kickoff_utc": fx["kickoff_utc"],
-            "odds": get_fixture_odds_cached(fx["id"]),
-        }
-        for fx in raw_fixtures
-    ]
+    try:
+        raw_fixtures = get_la_liga_fixtures_cached(today, days)
+        result = [
+            {
+                "home_team": fx["teams"]["home"]["name"],
+                "away_team": fx["teams"]["away"]["name"],
+                "kickoff_utc": fx["kickoff_utc"],
+                "odds": get_fixture_odds_cached(fx["id"]),
+            }
+            for fx in raw_fixtures
+        ]
+    except QuotaExceededError as e:
+        return _quota_exceeded_response(e)
     return {
         "league": SUPPORTED_LEAGUES[league],
         "days": days,
@@ -199,6 +219,7 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
                 UnknownTeamResponse,
                 InsufficientHistoryResponse,
                 RefusedResponse,
+                QuotaExceededResponse,
             ]
         }
     },
@@ -214,27 +235,31 @@ def analyze(req: MatchRequest):
 
     Statuts possibles : ok, match_not_available, league_not_available,
     unknown_team, insufficient_history, refused (ces trois derniers viennent
-    de engine.analyze_match - voir sa docstring pour leurs conditions exactes).
+    de engine.analyze_match - voir sa docstring pour leurs conditions exactes),
+    quota_exceeded (etape 9 - aucun appel reseau n'a ete tente).
     """
     league = (req.league or DEFAULT_LEAGUE).lower()
     if league not in SUPPORTED_LEAGUES:
         return _unsupported_league_response(league)
 
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
-    fx = find_fixture(req.home_team, req.away_team, DEFAULT_FIXTURES_DAYS)
-    if fx is None:
-        return {
-            "status": "match_not_available",
-            "home_team": req.home_team,
-            "away_team": req.away_team,
-            "reason": (
-                f"aucun match trouve entre ces deux equipes dans les "
-                f"{DEFAULT_FIXTURES_DAYS} prochains jours couverts (La Liga) - "
-                f"verifiez que home_team est bien l'equipe qui recoit"
-            ),
-        }
-    match_date = fx["kickoff_utc"][:10]
-    odds = get_fixture_odds_cached(fx["id"])
+    try:
+        fx = find_fixture(req.home_team, req.away_team, DEFAULT_FIXTURES_DAYS)
+        if fx is None:
+            return {
+                "status": "match_not_available",
+                "home_team": req.home_team,
+                "away_team": req.away_team,
+                "reason": (
+                    f"aucun match trouve entre ces deux equipes dans les "
+                    f"{DEFAULT_FIXTURES_DAYS} prochains jours couverts (La Liga) - "
+                    f"verifiez que home_team est bien l'equipe qui recoit"
+                ),
+            }
+        match_date = fx["kickoff_utc"][:10]
+        odds = get_fixture_odds_cached(fx["id"])
+    except QuotaExceededError as e:
+        return _quota_exceeded_response(e)
     return analyze_match(req.home_team, req.away_team, match_date, train_season, odds=odds)
 
 
@@ -260,6 +285,7 @@ class DailyBatchRequest(BaseModel):
                 DailyBatchOkResponse,
                 NoMatchesAvailableResponse,
                 LeagueNotAvailableResponse,
+                QuotaExceededResponse,
             ]
         }
     },
@@ -282,22 +308,25 @@ def daily_batch(req: DailyBatchRequest):
         day = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
     batch_date = day.date().isoformat()
 
-    raw_fixtures = get_la_liga_fixtures_cached(day, 1)
-    if not raw_fixtures:
-        return {
-            "status": "no_matches_available",
-            "batch_date": batch_date,
-            "reason": "aucun match La Liga ce jour-la",
-        }
+    try:
+        raw_fixtures = get_la_liga_fixtures_cached(day, 1)
+        if not raw_fixtures:
+            return {
+                "status": "no_matches_available",
+                "batch_date": batch_date,
+                "reason": "aucun match La Liga ce jour-la",
+            }
 
-    fixtures = [
-        {
-            "home_team": fx["teams"]["home"]["name"],
-            "away_team": fx["teams"]["away"]["name"],
-            "odds": get_fixture_odds_cached(fx["id"]),
-        }
-        for fx in raw_fixtures
-    ]
+        fixtures = [
+            {
+                "home_team": fx["teams"]["home"]["name"],
+                "away_team": fx["teams"]["away"]["name"],
+                "odds": get_fixture_odds_cached(fx["id"]),
+            }
+            for fx in raw_fixtures
+        ]
+    except QuotaExceededError as e:
+        return _quota_exceeded_response(e)
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
     return run_daily_batch(fixtures, train_season, combo_definitions, batch_date, save=req.save)
