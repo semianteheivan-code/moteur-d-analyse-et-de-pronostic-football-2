@@ -1,6 +1,6 @@
 ﻿from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Union
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from engine import analyze_match
@@ -14,6 +14,121 @@ from sources.five_dollar_football import (
 )
 
 app = FastAPI(title="Moteur de pronostic football - API locale")
+
+
+# --- Modeles de reponse (etape 5b, A6+A8) -----------------------------------
+# Declares a partir des JSON reellement observes pendant les tests de cette
+# conversation, sauf mention contraire ci-dessous. Utilises uniquement via
+# responses={...} (documentation dans /docs et openapi.json) - jamais via
+# response_model, donc aucune validation n'est forcee a l'execution : une
+# reponse reelle qui ne correspondrait pas exactement a ces schemas ne
+# plantera pas l'appel.
+
+class HealthResponse(BaseModel):
+    status: str
+    last_match_date_in_db: Optional[str] = None
+
+
+class FixtureItem(BaseModel):
+    home_team: str
+    away_team: str
+    kickoff_utc: str
+    odds: Dict[str, float]
+
+
+class FixturesOkResponse(BaseModel):
+    league: str
+    days: int
+    reference_date: str
+    fixtures: List[FixtureItem]
+
+
+class LeagueNotAvailableResponse(BaseModel):
+    status: str
+    league: str
+    reason: str
+
+
+class MarketEntry(BaseModel):
+    probability: Optional[float] = None
+    market_odds: Optional[float] = None
+    market_implied_probability: Optional[float] = None
+    edge: Optional[float] = None
+    value_bet: Optional[bool] = None
+    expected_total: Optional[float] = None
+
+
+class OpportunityEntry(MarketEntry):
+    market: str
+
+
+class AnalyzeOkResponse(BaseModel):
+    status: str
+    home_team: str
+    away_team: str
+    match_date: str
+    confidence: float
+    markets: Dict[str, MarketEntry]
+    opportunities_sorted_by_edge: List[OpportunityEntry]
+    safest_market: str
+
+
+class MatchNotAvailableResponse(BaseModel):
+    status: str
+    home_team: str
+    away_team: str
+    reason: str
+
+
+class UnknownTeamResponse(BaseModel):
+    # Declenche en appelant directement engine.analyze_match (meme fonction
+    # qu'utilise cet endpoint une fois le match trouve), pas via /analyze
+    # lui-meme - voir le registre de decisions de la feuille de route.
+    status: str
+    home_team: str
+    away_team: str
+    reason: str
+
+
+class InsufficientHistoryResponse(BaseModel):
+    # Meme remarque que UnknownTeamResponse.
+    status: str
+    home_team: str
+    away_team: str
+    train_season: str
+    reason: str
+
+
+class RefusedResponse(BaseModel):
+    # Meme remarque que UnknownTeamResponse.
+    status: str
+    home_team: str
+    away_team: str
+    reason: str
+    confidence: float
+
+
+class ComboResult(BaseModel):
+    status: str
+    selections: Optional[list] = None
+    total_odds: Optional[float] = None
+    combined_probability: Optional[float] = None
+    reason: Optional[str] = None
+
+
+class DailyBatchOkResponse(BaseModel):
+    batch_date: str
+    matches_analyzed: int
+    matches_ok: int
+    combos: Dict[str, ComboResult]
+    details: List[dict]
+    saved: bool
+
+
+class NoMatchesAvailableResponse(BaseModel):
+    status: str
+    batch_date: str
+    reason: str
 
 
 def _unsupported_league_response(league: str) -> dict:
@@ -34,7 +149,7 @@ class MatchRequest(BaseModel):
     league: Optional[str] = None
 
 
-@app.get("/health")
+@app.get("/health", responses={200: {"model": HealthResponse}})
 def health():
     conn = get_connection()
     row = conn.execute("SELECT MAX(date) as last_match_date FROM matches").fetchone()
@@ -44,7 +159,10 @@ def health():
     }
 
 
-@app.get("/fixtures")
+@app.get(
+    "/fixtures",
+    responses={200: {"model": Union[FixturesOkResponse, LeagueNotAvailableResponse]}},
+)
 def fixtures(days: Optional[int] = None, league: Optional[str] = None):
     league = (league or DEFAULT_LEAGUE).lower()
     if league not in SUPPORTED_LEAGUES:
@@ -70,7 +188,21 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
     }
 
 
-@app.post("/analyze")
+@app.post(
+    "/analyze",
+    responses={
+        200: {
+            "model": Union[
+                AnalyzeOkResponse,
+                MatchNotAvailableResponse,
+                LeagueNotAvailableResponse,
+                UnknownTeamResponse,
+                InsufficientHistoryResponse,
+                RefusedResponse,
+            ]
+        }
+    },
+)
 def analyze(req: MatchRequest):
     """
     Le client choisit quel match il veut analyser (home_team/away_team),
@@ -79,6 +211,10 @@ def analyze(req: MatchRequest):
     jours) et recupere ses cotes automatiquement. home_team doit etre
     l'equipe qui joue a domicile (l'avantage du terrain change le calcul) :
     si le sens est inverse, le match ne sera pas trouve.
+
+    Statuts possibles : ok, match_not_available, league_not_available,
+    unknown_team, insufficient_history, refused (ces trois derniers viennent
+    de engine.analyze_match - voir sa docstring pour leurs conditions exactes).
     """
     league = (req.league or DEFAULT_LEAGUE).lower()
     if league not in SUPPORTED_LEAGUES:
@@ -116,7 +252,18 @@ class DailyBatchRequest(BaseModel):
     league: Optional[str] = None
 
 
-@app.post("/daily-batch")
+@app.post(
+    "/daily-batch",
+    responses={
+        200: {
+            "model": Union[
+                DailyBatchOkResponse,
+                NoMatchesAvailableResponse,
+                LeagueNotAvailableResponse,
+            ]
+        }
+    },
+)
 def daily_batch(req: DailyBatchRequest):
     """
     Le client ne fournit plus les matchs ni leurs cotes : le moteur recupere
