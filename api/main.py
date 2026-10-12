@@ -1,10 +1,10 @@
 ﻿from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from engine import analyze_match
-from daily_batch import run_daily_batch
+from daily_batch import run_daily_batch, kickoff_has_passed
 from db.database import get_connection
 from config import DEFAULT_TRAIN_SEASON, DEFAULT_FIXTURES_DAYS, REFERENCE_TIMEZONE, SUPPORTED_LEAGUES, DEFAULT_LEAGUE
 from sources.five_dollar_football import (
@@ -34,6 +34,7 @@ class FixtureItem(BaseModel):
     home_team: str
     away_team: str
     kickoff_utc: str
+    started: bool  # etape A10 : vrai si le coup d'envoi est deja passe
     odds: Dict[str, float]
 
 
@@ -81,6 +82,7 @@ class AnalyzeOkResponse(BaseModel):
     markets: Dict[str, MarketEntry]
     opportunities_sorted_by_edge: List[OpportunityEntry]
     safest_market: str
+    started: bool  # etape A10
 
 
 class MatchNotAvailableResponse(BaseModel):
@@ -98,6 +100,7 @@ class UnknownTeamResponse(BaseModel):
     home_team: str
     away_team: str
     reason: str
+    started: bool  # etape A10
 
 
 class InsufficientHistoryResponse(BaseModel):
@@ -107,6 +110,7 @@ class InsufficientHistoryResponse(BaseModel):
     away_team: str
     train_season: str
     reason: str
+    started: bool  # etape A10
 
 
 class RefusedResponse(BaseModel):
@@ -116,6 +120,7 @@ class RefusedResponse(BaseModel):
     away_team: str
     reason: str
     confidence: float
+    started: bool  # etape A10
 
 
 class ComboResult(BaseModel):
@@ -187,6 +192,7 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
 
     days = min(days or DEFAULT_FIXTURES_DAYS, 14)  # garde-fou simple contre un usage abusif du quota
     today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    now_utc = datetime.now(timezone.utc)
     try:
         raw_fixtures = get_la_liga_fixtures_cached(today, days)
         result = [
@@ -194,6 +200,7 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
                 "home_team": fx["teams"]["home"]["name"],
                 "away_team": fx["teams"]["away"]["name"],
                 "kickoff_utc": fx["kickoff_utc"],
+                "started": kickoff_has_passed(fx["kickoff_utc"], 0, now_utc),  # etape A10
                 "odds": get_fixture_odds_cached(fx["id"]),
             }
             for fx in raw_fixtures
@@ -236,7 +243,11 @@ def analyze(req: MatchRequest):
     Statuts possibles : ok, match_not_available, league_not_available,
     unknown_team, insufficient_history, refused (ces trois derniers viennent
     de engine.analyze_match - voir sa docstring pour leurs conditions exactes),
-    quota_exceeded (etape 9 - aucun appel reseau n'a ete tente).
+    quota_exceeded (etape 9 - aucun appel reseau n'a ete tente). Tous les
+    statuts sauf match_not_available/league_not_available/quota_exceeded
+    incluent un champ "started" (etape A10) : le match est renvoye et
+    analyse meme s'il a deja commence ou est termine (utile pour comparer
+    pronostic et resultat), mais ce champ le signale explicitement.
     """
     league = (req.league or DEFAULT_LEAGUE).lower()
     if league not in SUPPORTED_LEAGUES:
@@ -257,10 +268,13 @@ def analyze(req: MatchRequest):
                 ),
             }
         match_date = fx["kickoff_utc"][:10]
+        started = kickoff_has_passed(fx["kickoff_utc"])  # etape A10
         odds = get_fixture_odds_cached(fx["id"])
     except QuotaExceededError as e:
         return _quota_exceeded_response(e)
-    return analyze_match(req.home_team, req.away_team, match_date, train_season, odds=odds)
+    result = analyze_match(req.home_team, req.away_team, match_date, train_season, odds=odds)
+    result["started"] = started
+    return result
 
 
 class ComboDefinitionInput(BaseModel):
@@ -275,6 +289,7 @@ class DailyBatchRequest(BaseModel):
     batch_date: Optional[str] = None  # format "YYYY-MM-DD", par defaut aujourd'hui (Africa/Abidjan)
     save: bool = True  # False = simulation, n'enregistre rien dans predictions
     league: Optional[str] = None
+    min_minutes_before_kickoff: float = 0  # etape A10 : marge avant exclusion des combines
 
 
 @app.post(
@@ -296,7 +311,9 @@ def daily_batch(req: DailyBatchRequest):
     lui-meme les matchs La Liga du jour demande (ou aujourd'hui par defaut,
     en heure d'Abidjan) et leurs cotes. Le client garde la main sur les
     fourchettes de combines demandees (combo_definitions), la date a traiter
-    (batch_date) et s'il veut enregistrer le resultat ou juste simuler (save).
+    (batch_date), s'il veut enregistrer le resultat ou juste simuler (save),
+    et la marge avant coup d'envoi en-dessous de laquelle un match est exclu
+    des combines (min_minutes_before_kickoff, etape A10 - 0 par defaut).
     """
     league = (req.league or DEFAULT_LEAGUE).lower()
     if league not in SUPPORTED_LEAGUES:
@@ -321,6 +338,7 @@ def daily_batch(req: DailyBatchRequest):
             {
                 "home_team": fx["teams"]["home"]["name"],
                 "away_team": fx["teams"]["away"]["name"],
+                "kickoff_utc": fx["kickoff_utc"],
                 "odds": get_fixture_odds_cached(fx["id"]),
             }
             for fx in raw_fixtures
@@ -329,4 +347,5 @@ def daily_batch(req: DailyBatchRequest):
         return _quota_exceeded_response(e)
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
-    return run_daily_batch(fixtures, train_season, combo_definitions, batch_date, save=req.save)
+    return run_daily_batch(fixtures, train_season, combo_definitions, batch_date,
+                            save=req.save, min_minutes_before_kickoff=req.min_minutes_before_kickoff)

@@ -1,5 +1,5 @@
 ﻿"""
-Script de non-regression de l'API (etape 6 / T5).
+Script de non-regression de l'API (etape 6 / T5, complete A10).
 Suppose que le serveur tourne deja (uvicorn api.main:app).
 Usage : python test_api.py
 """
@@ -80,6 +80,7 @@ except Exception as e:
 # Test 4 : /analyze sur un vrai match decouvert via /fixtures
 # ---------------------------------------------------------------------
 test4_name = "POST /analyze sur un match reel decouvert via /fixtures"
+analyze_real_match_data = None
 if not fixtures_list:
     record(test4_name, "SKIP", "aucun match disponible actuellement dans /fixtures")
 else:
@@ -99,6 +100,8 @@ else:
             ok = data.get("status") in valid_statuses
             record(test4_name, "OK" if ok else "FAIL",
                    f"{home} vs {away} -> status={data.get('status')!r}")
+            if ok:
+                analyze_real_match_data = data
         except Exception as e:
             record(test4_name, "FAIL", f"exception: {e}")
 
@@ -167,6 +170,45 @@ try:
            f"avant={before}, apres={after}, status_reponse={data.get('status')!r}")
 except Exception as e:
     record("POST /daily-batch save=false n'ecrit rien dans predictions", "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 9 (A10) : /fixtures expose un champ "started" booleen par match
+# ---------------------------------------------------------------------
+test9_name = "GET /fixtures expose un champ 'started' booleen (A10)"
+if not fixtures_list:
+    record(test9_name, "SKIP", "aucun match disponible actuellement dans /fixtures")
+else:
+    ok = all(isinstance(fx.get("started"), bool) for fx in fixtures_list)
+    record(test9_name, "OK" if ok else "FAIL",
+           f"started={[fx.get('started') for fx in fixtures_list]}")
+
+# ---------------------------------------------------------------------
+# Test 10 (A10) : /analyze expose un champ "started" booleen
+# ---------------------------------------------------------------------
+test10_name = "POST /analyze expose un champ 'started' booleen (A10)"
+if analyze_real_match_data is None:
+    record(test10_name, "SKIP", "test 4 n'a pas produit de reponse exploitable")
+else:
+    ok = isinstance(analyze_real_match_data.get("started"), bool)
+    record(test10_name, "OK" if ok else "FAIL",
+           f"started={analyze_real_match_data.get('started')!r}")
+
+# ---------------------------------------------------------------------
+# Test 11 (A10) : /daily-batch accepte min_minutes_before_kickoff
+# ---------------------------------------------------------------------
+try:
+    r = requests.post(f"{BASE}/daily-batch", json={
+        "combo_definitions": [{"name": "T", "min_odds": 1.0, "max_odds": 10.0}],
+        "save": False,
+        "min_minutes_before_kickoff": 15,
+    })
+    data = r.json()
+    ok = r.status_code == 200 and "reason" not in data or data.get("status") != "validation_error"
+    ok = r.status_code == 200
+    record("POST /daily-batch accepte min_minutes_before_kickoff (A10)",
+           "OK" if ok else "FAIL", f"status_code={r.status_code}, status_reponse={data.get('status')!r}")
+except Exception as e:
+    record("POST /daily-batch accepte min_minutes_before_kickoff (A10)", "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
 # Resume final
