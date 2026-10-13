@@ -27,9 +27,10 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list,
         combines les matchs deja commences (etape A10) ; un fixture sans
         kickoff_utc reste eligible par defaut (compatibilite avec les appelants
         qui ne le fournissent pas encore). fixture_id et league (etape A14),
-        s'ils sont fournis, sont propages dans "details" et dans les sélections
-        de chaque combine - un fixture qui ne les fournit pas garde simplement
-        ces champs a null, sans erreur (compatibilite).
+        s'ils sont fournis, sont propages dans "details", dans les sélections
+        de chaque combine, ET desormais dans la table predictions (prerequis
+        auto-calibration, 13/10/2026) - un fixture qui ne les fournit pas
+        garde simplement ces champs a null, sans erreur (compatibilite).
     train_season : saison utilisee pour calculer les forces du modele.
     combo_definitions : liste de dicts {name, min_odds, max_odds} -
         chaque entree demande un combine dans cette fourchette, sous ce nom.
@@ -110,13 +111,15 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list,
                     """
                     INSERT INTO predictions (
                         created_at, match_date, home_team, away_team,
-                        market, outcome, probability, bookmaker_odds, confidence
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        market, outcome, probability, bookmaker_odds, confidence,
+                        fixture_id, league
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         created_at, batch_date, m["home_team"], m["away_team"],
                         market_label, market_label, market_data["probability"],
                         market_data.get("market_odds"), m["confidence"],
+                        m.get("fixture_id"), m.get("league"),
                     ),
                 )
         conn.commit()

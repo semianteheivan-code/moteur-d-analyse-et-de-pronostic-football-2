@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS predictions (
     probability REAL NOT NULL,
     bookmaker_odds REAL,
     confidence REAL,
-    actual_result TEXT
+    actual_result TEXT,
+    fixture_id TEXT,
+    league TEXT
 );
 
 -- Etape 9 : compteur de requetes reseau reelles vers l'API live, une ligne par appel,
@@ -74,6 +76,25 @@ def get_connection():
     return conn
 
 
+def _migrate_predictions_table(conn):
+    """
+    Ajoute fixture_id/league a une base deja existante (prerequis pour une
+    future boucle d'auto-calibration, 13/10/2026). CREATE TABLE IF NOT
+    EXISTS ne modifie jamais une table deja creee - une vraie migration est
+    donc necessaire pour les bases qui existaient avant cet ajout. Verifie
+    d'abord les colonnes presentes (PRAGMA table_info) pour pouvoir etre
+    relancee sans risque (idempotente) : SQLite ne supporte pas
+    "ADD COLUMN IF NOT EXISTS" directement.
+    """
+    existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(predictions)").fetchall()}
+    if "fixture_id" not in existing_columns:
+        conn.execute("ALTER TABLE predictions ADD COLUMN fixture_id TEXT")
+    if "league" not in existing_columns:
+        conn.execute("ALTER TABLE predictions ADD COLUMN league TEXT")
+
+
 def init_db():
     with get_connection() as conn:
         conn.executescript(SCHEMA)
+        _migrate_predictions_table(conn)
+        conn.commit()
