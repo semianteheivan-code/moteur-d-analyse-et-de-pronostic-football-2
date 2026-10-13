@@ -1,4 +1,4 @@
-import numpy as np
+﻿import numpy as np
 from scipy.stats import poisson
 from scipy.optimize import minimize, minimize_scalar
 from db.database import get_connection
@@ -77,7 +77,7 @@ def _fit_team_strengths_mle(rows) -> dict:
 
 
 _SEASON_STRENGTHS_CACHE = {}
-_GLOBAL_RHO_CACHE = None
+_RHO_CACHE = {}  # cle = tuple(sorted(seasons)) de saisons utilisees, ou None pour "toutes les saisons disponibles"
 
 
 def _get_season_strengths(season: str) -> dict:
@@ -99,18 +99,32 @@ def _get_season_strengths(season: str) -> dict:
     return strengths
 
 
-def fit_global_rho(force_refresh: bool = False) -> float:
+def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
     """
-    Ajuste rho UNE SEULE FOIS sur l'ensemble des saisons disponibles (voir
-    diagnostic_rho.py : un fit par saison individuelle s'est revele instable).
-    Reutilise les forces deja calculees via le cache par saison.
+    Ajuste rho en regroupant les matchs des saisons indiquees.
+
+    seasons=None (par defaut) : utilise TOUTES les saisons disponibles en
+    base - c'est le comportement du moteur en production (engine.py, via
+    predict_match), ou ceci est correct et sans risque : au moment d'une
+    vraie prediction, aucune saison "future" n'existe encore dans la base.
+
+    seasons=[...] explicite : restreint le calcul a ces saisons uniquement.
+    OBLIGATOIRE pour un backtest (etape M5, fuite corrigee le 13/10/2026) -
+    l'appelant doit alors ne passer QUE les saisons anterieures ou egales a
+    la saison d'entrainement, jamais la saison de test. Avant cette
+    correction, fit_global_rho() regroupait systematiquement toutes les
+    saisons de la base (y compris celle utilisee comme test), donnant au
+    modele une partie de la reponse avant l'evaluation - les chiffres de
+    ROI/calibration mesures avant cette date doivent etre consideres comme
+    optimistes, a re-mesurer.
     """
-    global _GLOBAL_RHO_CACHE
-    if _GLOBAL_RHO_CACHE is not None and not force_refresh:
-        return _GLOBAL_RHO_CACHE
+    cache_key = tuple(sorted(seasons)) if seasons is not None else None
+    if cache_key in _RHO_CACHE and not force_refresh:
+        return _RHO_CACHE[cache_key]
 
     conn = get_connection()
-    seasons = [r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall()]
+    if seasons is None:
+        seasons = [r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall()]
 
     pooled_lam_h, pooled_lam_a, pooled_hg, pooled_ag = [], [], [], []
 
@@ -146,15 +160,16 @@ def fit_global_rho(force_refresh: bool = False) -> float:
         return -ll
 
     result = minimize_scalar(neg_log_likelihood, bounds=RHO_BOUNDS, method="bounded")
-    _GLOBAL_RHO_CACHE = float(result.x)
-    return _GLOBAL_RHO_CACHE
+    _RHO_CACHE[cache_key] = float(result.x)
+    return _RHO_CACHE[cache_key]
 
 
-def compute_team_strengths(season: str) -> dict:
+def compute_team_strengths(season: str, rho_seasons: list = None) -> dict:
     """Calcule les forces d'equipe (attack, defense, home_advantage) par MLE
-    conjointe pour une saison (mise en cache), + rho (global, mis en cache)."""
+    conjointe pour une saison (mise en cache), + rho (mis en cache separement,
+    voir fit_global_rho pour le role de rho_seasons - etape M5)."""
     strengths = dict(_get_season_strengths(season))
-    strengths["rho"] = fit_global_rho()
+    strengths["rho"] = fit_global_rho(rho_seasons)
     return strengths
 
 

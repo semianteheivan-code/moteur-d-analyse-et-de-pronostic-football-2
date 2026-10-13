@@ -1,12 +1,27 @@
-from collections import defaultdict
+﻿from collections import defaultdict
 from models.poisson import compute_team_strengths, predict_match_from_strengths
 from db.database import get_connection
 
-VALUE_THRESHOLD = 0.05  # marge minimale entre proba modèle et proba implicite pour parier
+VALUE_THRESHOLD = 0.05  # marge minimale entre proba modele et proba implicite pour parier
+
+
+def _known_seasons() -> list:
+    conn = get_connection()
+    return sorted(r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall())
+
+
+def _rho_training_seasons(train_season: str) -> list:
+    """
+    Saisons eligibles pour calculer rho sans fuite (etape M5, corrigee le
+    13/10/2026) : uniquement celles anterieures ou egales a la saison
+    d'entrainement, jamais la saison de test - sinon le modele voit une
+    partie de la reponse avant l'evaluation.
+    """
+    return [s for s in _known_seasons() if s <= train_season]
 
 
 def run_backtest_pair(train_season: str, test_season: str, buckets, stats):
-    strengths_data = compute_team_strengths(train_season)
+    strengths_data = compute_team_strengths(train_season, rho_seasons=_rho_training_seasons(train_season))
     conn = get_connection()
     matches = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals, result FROM matches "
@@ -46,16 +61,16 @@ def run_full_backtest():
 
     for train, test in season_pairs:
         run_backtest_pair(train, test, buckets, stats)
-        print(f"  {train} -> {test} traité (cumul : {stats['total']} matchs)")
+        print(f"  {train} -> {test} traite (cumul : {stats['total']} matchs)")
 
-    print(f"\n=== Backtest cumulé sur {len(season_pairs)} couples de saisons ===")
-    print(f"Taux de réussite (issue la plus probable) : {stats['correct']}/{stats['total']} = {stats['correct']/stats['total']:.1%}\n")
+    print(f"\n=== Backtest cumule sur {len(season_pairs)} couples de saisons ===")
+    print(f"Taux de reussite (issue la plus probable) : {stats['correct']}/{stats['total']} = {stats['correct']/stats['total']:.1%}\n")
 
-    print("Calibration (probabilité annoncée de victoire domicile vs réalité) :")
+    print("Calibration (probabilite annoncee de victoire domicile vs realite) :")
     for bucket in sorted(buckets.keys()):
         data = buckets[bucket]
         actual_rate = data["hits"] / data["count"] if data["count"] else 0
-        print(f"  ~{bucket:.0%} annoncé -> {actual_rate:.1%} réalisé (sur {data['count']} matchs)")
+        print(f"  ~{bucket:.0%} annonce -> {actual_rate:.1%} realise (sur {data['count']} matchs)")
 
 
 def implied_prob(odds):
@@ -63,8 +78,9 @@ def implied_prob(odds):
 
 
 def run_value_bet_backtest(train_season: str, test_season: str, bankroll_state):
-    # Forces (et rho) calculées UNE FOIS pour la saison d'entraînement, pas à chaque match.
-    strengths_data = compute_team_strengths(train_season)
+    # Forces (et rho) calculees UNE FOIS pour la saison d'entrainement, pas a chaque match.
+    # rho restreint aux saisons <= train_season (etape M5) : jamais la saison de test.
+    strengths_data = compute_team_strengths(train_season, rho_seasons=_rho_training_seasons(train_season))
 
     conn = get_connection()
     matches = conn.execute(
@@ -119,15 +135,15 @@ def run_full_value_backtest():
     for train, test in season_pairs:
         run_value_bet_backtest(train, test, bankroll_state)
 
-    print(f"\n=== Test de rentabilité (value bets détectés, seuil {VALUE_THRESHOLD:.0%}) ===")
-    print(f"Nombre de paris simulés : {bankroll_state['bets']}")
-    print(f"Total misé : {bankroll_state['staked']:.1f} unités")
-    print(f"Total retourné : {bankroll_state['returned']:.1f} unités")
+    print(f"\n=== Test de rentabilite (value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
+    print(f"Nombre de paris simules : {bankroll_state['bets']}")
+    print(f"Total mise : {bankroll_state['staked']:.1f} unites")
+    print(f"Total retourne : {bankroll_state['returned']:.1f} unites")
     profit = bankroll_state["returned"] - bankroll_state["staked"]
     roi = (profit / bankroll_state["staked"] * 100) if bankroll_state["staked"] else 0
-    print(f"Profit/perte : {profit:+.1f} unités (ROI : {roi:+.1f}%)")
+    print(f"Profit/perte : {profit:+.1f} unites (ROI : {roi:+.1f}%)")
 
-    print("\nDétail par marché :")
+    print("\nDetail par marche :")
     for label in ["1", "X", "2", "over_2.5", "under_2.5"]:
         bets = bankroll_state.get(label + "_bets", 0)
         wins = bankroll_state.get(label + "_wins", 0)
@@ -137,14 +153,14 @@ def run_full_value_backtest():
         market_roi = (market_profit / staked * 100) if staked else 0
 
         if bets == 0:
-            print(f"  {label:10s} : aucun value bet détecté")
+            print(f"  {label:10s} : aucun value bet detecte")
             continue
 
         win_rate = wins / bets
         print(
             f"  {label:10s} : {bets:4d} paris | "
-            f"réussite {win_rate:5.1%} | "
-            f"misé {staked:5.1f} | rendu {returned:6.1f} | "
+            f"reussite {win_rate:5.1%} | "
+            f"mise {staked:5.1f} | rendu {returned:6.1f} | "
             f"profit {market_profit:+6.1f} (ROI {market_roi:+5.1f}%)"
         )
 
@@ -154,5 +170,5 @@ if __name__ == "__main__":
     run_full_backtest()
 
     print("\n" + "=" * 60)
-    print(">>> Backtest de rentabilité (value bets vs cotes réelles)")
+    print(">>> Backtest de rentabilite (value bets vs cotes reelles)")
     run_full_value_backtest()
