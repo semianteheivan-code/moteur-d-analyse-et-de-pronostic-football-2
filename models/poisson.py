@@ -31,12 +31,18 @@ def _prepare_match_arrays(rows, team_to_idx: dict) -> dict:
 
 
 def _neg_log_likelihood_no_rho(params, n_teams, arrays):
-    """Vraisemblance negative vectorisee (Poisson pur, rho=0), pour estimer attack/defense/home_adv."""
+    """
+    Vraisemblance negative vectorisee (Poisson pur, rho=0), pour estimer
+    attack/defense/home_adv. Etape M1 (13/10/2026) : home_adv est maintenant
+    un parametre PAR EQUIPE (params[2n:3n]) au lieu d'un seul chiffre partage
+    par toutes les equipes - l'avantage du terrain n'a aucune raison d'etre
+    identique pour toutes les equipes d'un championnat.
+    """
     attack = params[:n_teams]
     defense = params[n_teams:2 * n_teams]
-    home_adv = params[2 * n_teams]
+    home_adv = params[2 * n_teams:3 * n_teams]
 
-    lam_h = np.exp(attack[arrays["home_idx"]] + defense[arrays["away_idx"]] + home_adv)
+    lam_h = np.exp(attack[arrays["home_idx"]] + defense[arrays["away_idx"]] + home_adv[arrays["home_idx"]])
     lam_a = np.exp(attack[arrays["away_idx"]] + defense[arrays["home_idx"]])
 
     ll = np.sum(poisson.logpmf(arrays["home_goals"], lam_h)) + np.sum(poisson.logpmf(arrays["away_goals"], lam_a))
@@ -45,7 +51,8 @@ def _neg_log_likelihood_no_rho(params, n_teams, arrays):
 
 def _fit_team_strengths_mle(rows) -> dict:
     """
-    Estime attack[team], defense[team] et l'avantage domicile par maximum de
+    Estime attack[team], defense[team] et home_advantage[team] (etape M1 :
+    desormais par equipe, plus un seul chiffre global) par maximum de
     vraisemblance conjointe (vectorise numpy, rho=0 a cette etape).
     """
     teams = sorted({r["home_team"] for r in rows} | {r["away_team"] for r in rows})
@@ -56,7 +63,7 @@ def _fit_team_strengths_mle(rows) -> dict:
     team_to_idx = {t: i for i, t in enumerate(teams)}
     arrays = _prepare_match_arrays(rows, team_to_idx)
 
-    x0 = np.concatenate([np.zeros(n), np.zeros(n), [0.2]])
+    x0 = np.concatenate([np.zeros(n), np.zeros(n), np.full(n, 0.2)])
     constraints = [{"type": "eq", "fun": lambda p, n=n: np.sum(p[:n])}]
 
     result = minimize(
@@ -71,7 +78,7 @@ def _fit_team_strengths_mle(rows) -> dict:
     params = result.x
     attack = dict(zip(teams, params[:n]))
     defense = dict(zip(teams, params[n:2 * n]))
-    home_adv = float(params[2 * n])
+    home_adv = dict(zip(teams, params[2 * n:3 * n]))  # etape M1 : par equipe
 
     return {"attack": attack, "defense": defense, "home_advantage": home_adv}
 
@@ -104,19 +111,14 @@ def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
     Ajuste rho en regroupant les matchs des saisons indiquees.
 
     seasons=None (par defaut) : utilise TOUTES les saisons disponibles en
-    base - c'est le comportement du moteur en production (engine.py, via
-    predict_match), ou ceci est correct et sans risque : au moment d'une
-    vraie prediction, aucune saison "future" n'existe encore dans la base.
+    base - comportement du moteur en production (engine.py, via
+    predict_match), correct et sans risque (aucune saison future n'existe
+    encore a ce moment-la).
 
     seasons=[...] explicite : restreint le calcul a ces saisons uniquement.
-    OBLIGATOIRE pour un backtest (etape M5, fuite corrigee le 13/10/2026) -
-    l'appelant doit alors ne passer QUE les saisons anterieures ou egales a
-    la saison d'entrainement, jamais la saison de test. Avant cette
-    correction, fit_global_rho() regroupait systematiquement toutes les
-    saisons de la base (y compris celle utilisee comme test), donnant au
-    modele une partie de la reponse avant l'evaluation - les chiffres de
-    ROI/calibration mesures avant cette date doivent etre consideres comme
-    optimistes, a re-mesurer.
+    Obligatoire pour un backtest (etape M5, fuite corrigee le 13/10/2026) -
+    l'appelant doit ne passer QUE les saisons anterieures ou egales a la
+    saison d'entrainement, jamais la saison de test.
     """
     cache_key = tuple(sorted(seasons)) if seasons is not None else None
     if cache_key in _RHO_CACHE and not force_refresh:
@@ -142,7 +144,8 @@ def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
             home, away = r["home_team"], r["away_team"]
             if home not in s["attack"] or away not in s["attack"]:
                 continue
-            lam_h = np.exp(s["attack"][home] + s["defense"][away] + s["home_advantage"])
+            # etape M1 : home_advantage est maintenant indexe par equipe (home uniquement, l'avantage ne s'applique qu'a l'equipe qui recoit)
+            lam_h = np.exp(s["attack"][home] + s["defense"][away] + s["home_advantage"][home])
             lam_a = np.exp(s["attack"][away] + s["defense"][home])
             pooled_lam_h.append(lam_h)
             pooled_lam_a.append(lam_a)
@@ -165,9 +168,8 @@ def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
 
 
 def compute_team_strengths(season: str, rho_seasons: list = None) -> dict:
-    """Calcule les forces d'equipe (attack, defense, home_advantage) par MLE
-    conjointe pour une saison (mise en cache), + rho (mis en cache separement,
-    voir fit_global_rho pour le role de rho_seasons - etape M5)."""
+    """Calcule les forces d'equipe (attack, defense, home_advantage par equipe - M1)
+    par MLE conjointe pour une saison (mise en cache), + rho (mis en cache separement)."""
     strengths = dict(_get_season_strengths(season))
     strengths["rho"] = fit_global_rho(rho_seasons)
     return strengths
@@ -176,13 +178,13 @@ def compute_team_strengths(season: str, rho_seasons: list = None) -> dict:
 def predict_match_from_strengths(strengths_data: dict, home_team: str, away_team: str) -> dict:
     attack = strengths_data["attack"]
     defense = strengths_data["defense"]
-    home_adv = strengths_data["home_advantage"]
+    home_adv = strengths_data["home_advantage"]  # etape M1 : dict par equipe
     rho = strengths_data["rho"]
 
     if home_team not in attack or away_team not in attack:
         raise ValueError("Equipe inconnue pour cette saison")
 
-    exp_home_goals = np.exp(attack[home_team] + defense[away_team] + home_adv)
+    exp_home_goals = np.exp(attack[home_team] + defense[away_team] + home_adv[home_team])
     exp_away_goals = np.exp(attack[away_team] + defense[home_team])
 
     matrix = np.zeros((MAX_GOALS + 1, MAX_GOALS + 1))
