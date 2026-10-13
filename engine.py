@@ -6,6 +6,12 @@ from sources.team_names import normalize
 
 MISSING_DATA_REFUSAL_THRESHOLD = 0.40  # section 7 du cahier des charges
 SUSPICIOUS_EDGE_THRESHOLD = 0.20  # M4 : au-dela, edge suspect (cote obsolete/erreur probable), pas une vraie opportunite
+MIN_MATCHES_FOR_STRENGTH = 5  # D1 (13/10/2026) : nombre minimum de matchs joues cette saison
+# avant qu'une equipe soit autorisee a entrer dans le calcul de force (compute_team_strengths).
+# Avant cette etape, une equipe avec 0 match etait deja refusee (insufficient_history), mais
+# une equipe avec 1 a 4 matchs passait sans protection, avec un risque reel d'estimation
+# instable (trop peu de donnees pour l'optimisation conjointe attaque/defense/avantage
+# domicile). Aligne sur FORM_WINDOW (features/form.py) pour rester coherent.
 
 SIMPLE_MARKETS = ["1", "X", "2", "over_2.5", "under_2.5"]
 DOUBLE_CHANCE_MARKETS = ["1X", "X2", "12"]
@@ -15,7 +21,7 @@ STAT_MARKETS = ["corners_over_9.5", "corners_under_9.5", "cards_over_4.5", "card
 SAFEST_ELIGIBLE_MARKETS = SIMPLE_MARKETS + STAT_MARKETS
 
 _KNOWN_TEAMS_CACHE = None
-_SEASON_TEAMS_CACHE = {}
+_SEASON_MATCH_COUNTS_CACHE = {}
 
 
 def _known_teams() -> set:
@@ -42,16 +48,28 @@ def resolve_team_names(home_team: str, away_team: str):
     return home, away, unknown
 
 
-def _teams_in_season(season: str) -> set:
-    if season not in _SEASON_TEAMS_CACHE:
+def _team_match_counts_in_season(season: str) -> dict:
+    """
+    Nombre de matchs joues par chaque equipe dans la saison donnee (D1,
+    13/10/2026). Remplace l'ancienne _teams_in_season() qui ne verifiait que
+    la presence (0 match -> refuse), pas le volume reel de donnees
+    disponibles pour estimer la force de l'equipe.
+    """
+    if season not in _SEASON_MATCH_COUNTS_CACHE:
         conn = get_connection()
         rows = conn.execute(
-            "SELECT DISTINCT home_team FROM matches WHERE season = ? "
-            "UNION SELECT DISTINCT away_team FROM matches WHERE season = ?",
+            """
+            SELECT team, COUNT(*) AS cnt FROM (
+                SELECT home_team AS team FROM matches WHERE season = ? AND home_goals IS NOT NULL
+                UNION ALL
+                SELECT away_team AS team FROM matches WHERE season = ? AND home_goals IS NOT NULL
+            )
+            GROUP BY team
+            """,
             (season, season),
         ).fetchall()
-        _SEASON_TEAMS_CACHE[season] = {r[0] for r in rows}
-    return _SEASON_TEAMS_CACHE[season]
+        _SEASON_MATCH_COUNTS_CACHE[season] = {r["team"]: r["cnt"] for r in rows}
+    return _SEASON_MATCH_COUNTS_CACHE[season]
 
 
 def _compute_confidence(feats: dict) -> float:
@@ -95,17 +113,24 @@ def analyze_match(home_team: str, away_team: str, match_date: str, train_season:
             "reason": f"equipe(s) non reconnue(s) : {', '.join(unknown)}",
         }
 
-    season_teams = _teams_in_season(train_season)
-    missing_from_season = [t for t in (home_team, away_team) if t not in season_teams]
-    if missing_from_season:
+    match_counts = _team_match_counts_in_season(train_season)
+    insufficient_teams = [
+        t for t in (home_team, away_team)
+        if match_counts.get(t, 0) < MIN_MATCHES_FOR_STRENGTH
+    ]
+    if insufficient_teams:
+        details = ", ".join(
+            f"{t} ({match_counts.get(t, 0)} match(s) joue(s))" for t in insufficient_teams
+        )
         return {
             "status": "insufficient_history",
             "home_team": home_team,
             "away_team": away_team,
             "train_season": train_season,
             "reason": (
-                f"equipe(s) sans historique pour la saison {train_season} : "
-                f"{', '.join(missing_from_season)} (probablement promue ou reversee)"
+                f"historique trop court pour la saison {train_season} "
+                f"(minimum {MIN_MATCHES_FOR_STRENGTH} matchs requis) : {details} "
+                f"(probablement promue, recemment transferee ou saison a peine commencee)"
             ),
         }
 
