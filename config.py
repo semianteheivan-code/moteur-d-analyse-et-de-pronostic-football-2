@@ -52,9 +52,13 @@ DEFAULT_LEAGUE = "la_liga"
 # (A7) - derivee de LEAGUES, une seule source de verite.
 SUPPORTED_LEAGUES = {entry["key"]: entry["name"] for entry in LEAGUES}
 
-# --- Protection de quota (etape 9) ---
-# Le fournisseur (5DollarFootballAPI) annonce 60 requetes/heure. On se fixe une
-# limite configurable plus basse par securite (marge pour eviter de taper pile
-# la limite reelle du fournisseur).
-API_QUOTA_LIMIT_PER_HOUR = 50
-API_QUOTA_WINDOW_MINUTES = 60
+# --- Protection de quota (etape 9, corrigee le 14/10/2026 - abonnement Pro) ---
+# Le palier gratuit annoncait 60 requetes/heure (fenetre horaire). Le palier
+# Pro fonctionne differemment : confirme via GET /v1/status le 13/10/2026,
+# c'est un vrai plafond PAR MINUTE (rate_limit=10, rate_window_seconds=60),
+# pas un total horaire. Une fenetre glissante d'une heure ne protegeait pas
+# contre une rafale de plusieurs appels en quelques secondes qui depasserait
+# quand meme la vraie limite du fournisseur - la fenetre doit donc suivre la
+# meme granularite (secondes), pas une approximation horaire.
+API_QUOTA_LIMIT_PER_WINDOW = 8     # marge de securite sous les 10/min reels
+API_QUOTA_WINDOW_SECONDS = 60

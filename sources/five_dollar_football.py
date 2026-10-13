@@ -3,7 +3,7 @@ import json
 
 import requests
 from config_secrets import FIVEDOLLAR_API_KEY
-from config import FIXTURES_CACHE_TTL_HOURS, ODDS_CACHE_TTL_HOURS, API_QUOTA_LIMIT_PER_HOUR, API_QUOTA_WINDOW_MINUTES
+from config import FIXTURES_CACHE_TTL_HOURS, ODDS_CACHE_TTL_HOURS, API_QUOTA_LIMIT_PER_WINDOW, API_QUOTA_WINDOW_SECONDS
 from db.database import get_connection
 
 BASE_URL = "https://api.5dollarfootballapi.com/v1"
@@ -20,25 +20,27 @@ class QuotaExceededError(Exception):
 def _check_and_record_quota() -> None:
     """
     Verifie le nombre de requetes reseau reelles effectuees dans la fenetre
-    glissante (API_QUOTA_WINDOW_MINUTES) et enregistre la requete en cours si
-    la limite (API_QUOTA_LIMIT_PER_HOUR) n'est pas atteinte. Atomique via une
+    glissante (API_QUOTA_WINDOW_SECONDS) et enregistre la requete en cours si
+    la limite (API_QUOTA_LIMIT_PER_WINDOW) n'est pas atteinte. Atomique via une
     transaction SQLite (BEGIN IMMEDIATE) pour eviter qu'un depassement passe
-    entre deux appels concurrents.
+    entre deux appels concurrents. Fenetre en secondes (corrige le 14/10/2026,
+    abonnement Pro) pour refleter la vraie granularite du fournisseur (par
+    minute, pas par heure).
     """
     conn = get_connection()
     now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(minutes=API_QUOTA_WINDOW_MINUTES)).isoformat()
+    cutoff = (now - timedelta(seconds=API_QUOTA_WINDOW_SECONDS)).isoformat()
 
     conn.execute("BEGIN IMMEDIATE")
     count = conn.execute(
         "SELECT COUNT(*) FROM api_requests WHERE requested_at > ?", (cutoff,)
     ).fetchone()[0]
 
-    if count >= API_QUOTA_LIMIT_PER_HOUR:
+    if count >= API_QUOTA_LIMIT_PER_WINDOW:
         conn.rollback()
         raise QuotaExceededError(
-            f"Quota atteint : {count}/{API_QUOTA_LIMIT_PER_HOUR} requetes "
-            f"sur les {API_QUOTA_WINDOW_MINUTES} dernieres minutes"
+            f"Quota atteint : {count}/{API_QUOTA_LIMIT_PER_WINDOW} requetes "
+            f"sur les {API_QUOTA_WINDOW_SECONDS} dernieres secondes"
         )
 
     conn.execute("INSERT INTO api_requests (requested_at) VALUES (?)", (now.isoformat(),))
@@ -305,7 +307,6 @@ def find_fixtures(home_team: str, away_team: str, days: int) -> list:
         and normalize(fx["teams"]["away"]["name"]) == away_target
     ]
     return sorted(matches, key=lambda fx: fx["kickoff_utc"])
-
 
 def find_fixture_by_id(fixture_id, days: int = 14):
     """
