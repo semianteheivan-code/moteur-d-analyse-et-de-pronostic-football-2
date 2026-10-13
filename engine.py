@@ -27,6 +27,21 @@ def _known_teams() -> set:
     return _KNOWN_TEAMS_CACHE
 
 
+def resolve_team_names(home_team: str, away_team: str):
+    """
+    Normalise les deux noms d'equipe et renvoie (home, away, unknown), ou
+    unknown est la liste des noms (normalises) non reconnus par le moteur,
+    dans l'ordre donne. A appeler avant toute recherche de match (A11) :
+    permet de distinguer un nom mal ecrit d'un match reellement absent,
+    sans lancer toute l'analyse.
+    """
+    home = normalize(home_team)
+    away = normalize(away_team)
+    known = _known_teams()
+    unknown = [t for t in (home, away) if t not in known]
+    return home, away, unknown
+
+
 def _teams_in_season(season: str) -> set:
     if season not in _SEASON_TEAMS_CACHE:
         conn = get_connection()
@@ -70,16 +85,13 @@ def _stat_markets(home_team: str, away_team: str, train_season: str) -> dict:
 
 
 def analyze_match(home_team: str, away_team: str, match_date: str, train_season: str, odds: dict = None) -> dict:
-    home_team = normalize(home_team)
-    away_team = normalize(away_team)
-
-    known = _known_teams()
-    unknown = [t for t in (home_team, away_team) if t not in known]
+    home_team, away_team, unknown = resolve_team_names(home_team, away_team)
     if unknown:
         return {
             "status": "unknown_team",
             "home_team": home_team,
             "away_team": away_team,
+            "unknown": unknown,
             "reason": f"equipe(s) non reconnue(s) : {', '.join(unknown)}",
         }
 

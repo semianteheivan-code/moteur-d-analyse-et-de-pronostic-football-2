@@ -21,11 +21,15 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list,
                      batch_date: str = None, save: bool = True,
                      min_minutes_before_kickoff: float = 0) -> dict:
     """
-    fixtures : liste de dicts {home_team, away_team, odds, kickoff_utc (optionnel)},
-        les matchs du jour. kickoff_utc (ISO 8601, ex. "2026-10-11T18:00:00Z")
-        permet d'exclure des combines les matchs deja commences (etape A10) ;
-        un fixture sans kickoff_utc reste eligible par defaut (compatibilite
-        avec les appelants qui ne le fournissent pas encore).
+    fixtures : liste de dicts {home_team, away_team, odds, kickoff_utc (optionnel),
+        fixture_id (optionnel), league (optionnel)}, les matchs du jour.
+        kickoff_utc (ISO 8601, ex. "2026-10-11T18:00:00Z") permet d'exclure des
+        combines les matchs deja commences (etape A10) ; un fixture sans
+        kickoff_utc reste eligible par defaut (compatibilite avec les appelants
+        qui ne le fournissent pas encore). fixture_id et league (etape A14),
+        s'ils sont fournis, sont propages dans "details" et dans les sélections
+        de chaque combine - un fixture qui ne les fournit pas garde simplement
+        ces champs a null, sans erreur (compatibilite).
     train_season : saison utilisee pour calculer les forces du modele.
     combo_definitions : liste de dicts {name, min_odds, max_odds} -
         chaque entree demande un combine dans cette fourchette, sous ce nom.
@@ -44,17 +48,37 @@ def run_daily_batch(fixtures: list, train_season: str, combo_definitions: list,
     """
     batch_date = batch_date or date.today().isoformat()
 
+    # Associe chaque match (par home_team/away_team) a son fixture_id et son
+    # league d'origine (etape A14), pour les reattacher apres analyze_matches
+    # (qui ne connait pas ces champs et les renverrait tel quel sinon absents).
+    fixture_info_by_pair = {
+        (f["home_team"], f["away_team"]): {
+            "fixture_id": f.get("fixture_id"),
+            "league": f.get("league"),
+        }
+        for f in fixtures
+    }
+
     requests = [
         {**f, "match_date": batch_date, "train_season": train_season}
         for f in fixtures
     ]
-    # kickoff_utc n'est pas un champ attendu par engine.analyze_match - on le
-    # retire des requetes envoyees au moteur, mais on s'en sert ci-dessous
-    # pour filtrer les candidats aux combines.
+    # kickoff_utc, fixture_id et league ne sont pas des champs attendus par
+    # engine.analyze_match - on les retire des requetes envoyees au moteur,
+    # mais kickoff_utc sert ci-dessous a filtrer les candidats aux combines,
+    # et fixture_id/league sont reattaches apres coup via fixture_info_by_pair.
     for r in requests:
         r.pop("kickoff_utc", None)
+        r.pop("fixture_id", None)
+        r.pop("league", None)
 
     analyzed = analyze_matches(requests)
+
+    # Reattache fixture_id et league a chaque match analyse (etape A14).
+    for m in analyzed:
+        info = fixture_info_by_pair.get((m["home_team"], m["away_team"]), {})
+        m["fixture_id"] = info.get("fixture_id")
+        m["league"] = info.get("league")
 
     now = datetime.now(timezone.utc)
     excluded_pairs = {

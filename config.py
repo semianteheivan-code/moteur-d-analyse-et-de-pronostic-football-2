@@ -29,14 +29,28 @@ DEFAULT_FIXTURES_DAYS = 3
 FIXTURES_CACHE_TTL_HOURS = 12   # cache du calendrier (change rarement)
 ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 
-# --- Championnats supportes (etape 5a, A7 - option A) ---
-# Un seul championnat reellement couvert pour l'instant (aucune colonne league
-# dans la base, tout le moteur suppose La Liga implicitement). Ce dictionnaire
-# existe pour que l'API puisse refuser proprement une demande sur un autre
-# championnat, sans deviner ni planter - pas une preparation au support
-# multi-championnat reel (qui reste un chantier separe, option B).
-SUPPORTED_LEAGUES = {"la_liga": "La Liga"}
+# --- Championnats supportes (etape 5a A7, etendue A13) ---
+# Une entree par championnat : nom officiel (ce que le moteur renvoie partout
+# ailleurs, champ "name"), pays (affichage cote client), surnoms (minuscules,
+# matches sans tenir compte des majuscules ni des espaces en trop - A16).
+# L'ordre de la liste est l'ordre d'affichage souhaite (A13). Ajouter un
+# championnat ne demande qu'une entree ici cote contrat API - un seul est
+# reellement couvert aujourd'hui (aucune colonne league en base, SP1/Understat
+# "La Liga" codes en dur ci-dessus) : onboarder reellement un 2e championnat
+# (historique, team_names.py, etc.) reste un chantier a part.
+LEAGUES = [
+    {
+        "key": "la_liga",
+        "name": "La Liga",
+        "country": "Espagne",
+        "aliases": ["la liga", "liga", "laliga", "espagne", "spain", "sp1"],
+    },
+]
 DEFAULT_LEAGUE = "la_liga"
+
+# Garde la forme simple (cle -> nom officiel) utilisee par le code existant
+# (A7) - derivee de LEAGUES, une seule source de verite.
+SUPPORTED_LEAGUES = {entry["key"]: entry["name"] for entry in LEAGUES}
 
 # --- Protection de quota (etape 9) ---
 # Le fournisseur (5DollarFootballAPI) annonce 60 requetes/heure. On se fixe une

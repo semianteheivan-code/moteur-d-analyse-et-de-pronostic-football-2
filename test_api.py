@@ -1,5 +1,5 @@
 ﻿"""
-Script de non-regression de l'API (etape 6 / T5, complete A10).
+Script de non-regression de l'API (etape 6 / T5, complete A10, A11, A13, A16, A17, A14).
 Suppose que le serveur tourne deja (uvicorn api.main:app).
 Usage : python test_api.py
 """
@@ -70,7 +70,7 @@ except Exception as e:
 try:
     r = requests.get(f"{BASE}/fixtures", params={"league": "premier_league"})
     data = r.json()
-    ok = data.get("status") == "league_not_available"
+    ok = data.get("status") == "league_not_available" and data.get("available") == ["La Liga"]
     record("GET /fixtures?league=premier_league -> league_not_available",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
@@ -203,12 +203,143 @@ try:
         "min_minutes_before_kickoff": 15,
     })
     data = r.json()
-    ok = r.status_code == 200 and "reason" not in data or data.get("status") != "validation_error"
     ok = r.status_code == 200
     record("POST /daily-batch accepte min_minutes_before_kickoff (A10)",
            "OK" if ok else "FAIL", f"status_code={r.status_code}, status_reponse={data.get('status')!r}")
 except Exception as e:
     record("POST /daily-batch accepte min_minutes_before_kickoff (A10)", "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 12 (A11) : nom mal ecrit -> unknown_team, pas match_not_available
+# ---------------------------------------------------------------------
+try:
+    r = requests.post(f"{BASE}/analyze", json={"home_team": "Levante", "away_team": "FC Seville"})
+    data = r.json()
+    ok = data.get("status") == "unknown_team" and data.get("unknown") == ["FC Seville"]
+    record("POST /analyze Levante/FC Seville -> unknown_team avec unknown=['FC Seville'] (A11)",
+           "OK" if ok else "FAIL", f"body={data}")
+except Exception as e:
+    record("POST /analyze Levante/FC Seville -> unknown_team avec unknown=['FC Seville'] (A11)",
+           "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 13 (A11) : deux noms connus, match absent -> match_not_available
+# ---------------------------------------------------------------------
+try:
+    r = requests.post(f"{BASE}/analyze", json={"home_team": "Barcelona", "away_team": "Girona"})
+    data = r.json()
+    ok = data.get("status") == "match_not_available"
+    record("POST /analyze Barcelona/Girona (pas au calendrier) -> match_not_available (A11)",
+           "OK" if ok else "FAIL", f"status={data.get('status')!r}")
+except Exception as e:
+    record("POST /analyze Barcelona/Girona (pas au calendrier) -> match_not_available (A11)",
+           "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 14 (A13) : GET /leagues liste La Liga par defaut
+# ---------------------------------------------------------------------
+try:
+    r = requests.get(f"{BASE}/leagues")
+    data = r.json()
+    leagues_list = data.get("leagues", [])
+    ok = (
+        data.get("default_league") == "La Liga"
+        and len(leagues_list) == 1
+        and leagues_list[0].get("name") == "La Liga"
+        and leagues_list[0].get("country") == "Espagne"
+        and "la liga" in leagues_list[0].get("aliases", [])
+    )
+    record("GET /leagues -> default_league='La Liga' avec une entree complete (A13)",
+           "OK" if ok else "FAIL", f"body={data}")
+except Exception as e:
+    record("GET /leagues -> default_league='La Liga' avec une entree complete (A13)",
+           "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 15 (A16) : surnom accepte, insensible a la casse
+# ---------------------------------------------------------------------
+try:
+    r1 = requests.get(f"{BASE}/fixtures", params={"league": "liga"})
+    r2 = requests.get(f"{BASE}/fixtures", params={"league": "LA LIGA"})
+    ok = r1.json().get("league") == "La Liga" and r2.json().get("league") == "La Liga"
+    record("GET /fixtures?league=liga et league=LA LIGA -> La Liga (A16)",
+           "OK" if ok else "FAIL",
+           f"league1={r1.json().get('league')!r}, league2={r2.json().get('league')!r}")
+except Exception as e:
+    record("GET /fixtures?league=liga et league=LA LIGA -> La Liga (A16)", "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 16 (A16) : championnat inconnu -> available liste les championnats
+# ---------------------------------------------------------------------
+try:
+    r = requests.get(f"{BASE}/fixtures", params={"league": "premier league"})
+    data = r.json()
+    ok = data.get("status") == "league_not_available" and data.get("available") == ["La Liga"]
+    record("GET /fixtures?league=premier league -> available=['La Liga'] (A16)",
+           "OK" if ok else "FAIL", f"body={data}")
+except Exception as e:
+    record("GET /fixtures?league=premier league -> available=['La Liga'] (A16)", "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 17 (A17) : /fixtures expose un fixture_id par match
+# ---------------------------------------------------------------------
+test17_name = "GET /fixtures expose un champ 'fixture_id' par match (A17)"
+if not fixtures_list:
+    record(test17_name, "SKIP", "aucun match disponible actuellement dans /fixtures")
+else:
+    ok = all(fx.get("fixture_id") is not None for fx in fixtures_list)
+    record(test17_name, "OK" if ok else "FAIL",
+           f"fixture_ids={[fx.get('fixture_id') for fx in fixtures_list]}")
+
+# ---------------------------------------------------------------------
+# Test 18 (A17) : /analyze avec fixture_id seul (sans noms d'equipes)
+# ---------------------------------------------------------------------
+test18_name = "POST /analyze avec fixture_id seul resout le bon match (A17)"
+if not fixtures_list or not fixtures_list[0].get("fixture_id"):
+    record(test18_name, "SKIP", "aucun fixture_id disponible via /fixtures")
+else:
+    fid = fixtures_list[0]["fixture_id"]
+    try:
+        r = requests.post(f"{BASE}/analyze", json={"fixture_id": fid})
+        data = r.json()
+        ok = data.get("status") in ("ok", "refused", "insufficient_history") and data.get("fixture_id") == fid
+        record(test18_name, "OK" if ok else "FAIL", f"fixture_id={fid!r}, body={data}")
+    except Exception as e:
+        record(test18_name, "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 19 (A17) : /analyze avec fixture_id invalide -> match_not_available
+# ---------------------------------------------------------------------
+try:
+    r = requests.post(f"{BASE}/analyze", json={"fixture_id": "99999999999"})
+    data = r.json()
+    ok = data.get("status") == "match_not_available"
+    record("POST /analyze avec fixture_id invalide -> match_not_available (A17)",
+           "OK" if ok else "FAIL", f"body={data}")
+except Exception as e:
+    record("POST /analyze avec fixture_id invalide -> match_not_available (A17)", "FAIL", f"exception: {e}")
+
+# ---------------------------------------------------------------------
+# Test 20 (A14) : /fixtures expose un champ "league" par match
+# ---------------------------------------------------------------------
+test20_name = "GET /fixtures expose un champ 'league' par match (A14)"
+if not fixtures_list:
+    record(test20_name, "SKIP", "aucun match disponible actuellement dans /fixtures")
+else:
+    ok = all(fx.get("league") == "La Liga" for fx in fixtures_list)
+    record(test20_name, "OK" if ok else "FAIL",
+           f"leagues={[fx.get('league') for fx in fixtures_list]}")
+
+# ---------------------------------------------------------------------
+# Test 21 (A14) : /analyze expose un champ "league" sur un match identifie
+# ---------------------------------------------------------------------
+test21_name = "POST /analyze expose un champ 'league' sur un match identifie (A14)"
+if analyze_real_match_data is None:
+    record(test21_name, "SKIP", "test 4 n'a pas produit de reponse exploitable")
+else:
+    ok = analyze_real_match_data.get("league") == "La Liga"
+    record(test21_name, "OK" if ok else "FAIL",
+           f"league={analyze_real_match_data.get('league')!r}")
 
 # ---------------------------------------------------------------------
 # Resume final

@@ -104,8 +104,6 @@ def get_fixture_odds(fixture_id: int) -> dict:
     r_goals = _api_get(f"{BASE_URL}/fixtures/{fixture_id}/odds", params={"market": "goal_line"})
     if r_goals.status_code == 200:
         closing = _extract_bet365(r_goals.json()).get("goal_line", {}).get("closing")
-        # On ignore la cote si la ligne du bookmaker n'est pas 2.5 : une cote sur
-        # une autre ligne (3.5, 1.5...) n'est pas comparable a notre marche over_2.5.
         if closing and closing.get("line") == 2.5:
             odds["over_2.5"] = closing.get("over")
             odds["under_2.5"] = closing.get("under")
@@ -154,9 +152,6 @@ def get_fixtures_for_daily_batch(day: datetime) -> list:
     ]
 
 
-# --- A partir d'ici : nouvelles fonctions avec cache (etape 2, A1 + D2) ---
-# N'affectent pas les fonctions ci-dessus ni run_live_batch.py, qui restent inchanges.
-
 def _cache_get(key: str, ttl_hours: float):
     conn = get_connection()
     row = conn.execute("SELECT payload, fetched_at FROM raw_cache WHERE key = ?", (key,)).fetchone()
@@ -172,8 +167,7 @@ def _cache_get_raw(key: str):
     """
     Comme _cache_get, mais ignore la fraicheur (TTL) : renvoie le dernier
     payload connu meme perime, ou None si la cle n'existe pas du tout.
-    Sert de base de fusion a l'etape 10 (on ne veut jamais perdre une info
-    deja connue a cause d'une reponse API vide ou incomplete).
+    Sert de base de fusion a l'etape 10.
     """
     conn = get_connection()
     row = conn.execute("SELECT payload FROM raw_cache WHERE key = ?", (key,)).fetchone()
@@ -197,8 +191,7 @@ def _merge_fixtures_by_id(old: list, new: list) -> list:
     Fusionne une ancienne liste de matchs (connue) avec une nouvelle liste
     recue de l'API, par id de match (etape 10). Un match deja connu n'est
     JAMAIS supprime simplement parce que l'API ne l'a pas renvoye cette
-    fois-ci (reponse vide ou partielle) ; un match renvoye a nouveau ecrase
-    sa version precedente (ses infos ont pu changer).
+    fois-ci.
     """
     merged = {fx["id"]: fx for fx in old}
     for fx in new:
@@ -209,21 +202,16 @@ def _merge_fixtures_by_id(old: list, new: list) -> list:
 def _merge_odds(old: dict, new: dict) -> dict:
     """
     Fusionne d'anciennes cotes connues avec les nouvelles recues de l'API,
-    marche par marche (etape 10). Une cote deja connue ("1", "X", "2",
-    "over_2.5", "under_2.5") n'est JAMAIS supprimee simplement parce que ce
-    nouvel appel ne l'a pas renvoyee (reponse vide ou partielle, ex. API en
-    souci passager) ; une cote renvoyee a nouveau ecrase sa valeur precedente
-    (elle a pu vraiment bouger).
+    marche par marche (etape 10).
     """
     return {**old, **new}
 
 
 def get_la_liga_fixtures_cached(start_date: datetime, num_days: int) -> list:
     """
-    Comme get_la_liga_fixtures, mais avec un cache par jour (table raw_cache),
-    pour eviter de rappeler l'API a chaque requete /fixtures (D2). Depuis
-    l'etape 10, un rafraichissement ne remplace plus jamais aveuglement le
-    cache : la nouvelle reponse est fusionnee avec le dernier calendrier
+    Comme get_la_liga_fixtures, mais avec un cache par jour (table raw_cache).
+    Depuis l'etape 10, un rafraichissement ne remplace plus jamais aveuglement
+    le cache : la nouvelle reponse est fusionnee avec le dernier calendrier
     connu, match par match, par id.
     """
     all_fixtures = []
@@ -244,10 +232,10 @@ def get_la_liga_fixtures_cached(start_date: datetime, num_days: int) -> list:
 
 def get_fixture_odds_cached(fixture_id: int) -> dict:
     """
-    Comme get_fixture_odds, mais avec un cache par match (table raw_cache,
-    D2). Depuis l'etape 10, un rafraichissement ne remplace plus jamais
-    aveuglement le cache : les nouvelles cotes sont fusionnees avec les
-    dernieres cotes connues, marche par marche.
+    Comme get_fixture_odds, mais avec un cache par match (table raw_cache).
+    Depuis l'etape 10, un rafraichissement ne remplace plus jamais aveuglement
+    le cache : les nouvelles cotes sont fusionnees avec les dernieres cotes
+    connues, marche par marche.
     """
     odds_key = f"odds:{fixture_id}"
     cached = _cache_get(odds_key, ODDS_CACHE_TTL_HOURS)
@@ -260,16 +248,16 @@ def get_fixture_odds_cached(fixture_id: int) -> dict:
     return merged
 
 
-if __name__ == "__main__":
-    matches = build_match_requests(datetime(2026, 10, 18, tzinfo=timezone.utc), 1, "2526")
-    print(json.dumps(matches, indent=2, ensure_ascii=False))
 def find_fixture(home_team: str, away_team: str, days: int) -> dict | None:
     """
     Cherche, dans la fenetre de couverture live (cache), un match ou l'equipe
     a domicile correspond a home_team et l'equipe a l'exterieur a away_team
     (comparaison normalisee). En cas de plusieurs correspondances, renvoie
     celle dont le coup d'envoi est le plus proche. Renvoie None si aucun
-    match ne correspond (le fixture brut de l'API, pas transforme).
+    match ne correspond.
+
+    Conservee pour compatibilite - /analyze (etape A17) utilise desormais
+    find_fixtures() ci-dessous, qui ne choisit pas a la place de l'appelant.
     """
     from datetime import datetime, timezone
     from config import REFERENCE_TIMEZONE
@@ -290,3 +278,54 @@ def find_fixture(home_team: str, away_team: str, days: int) -> dict | None:
     if not matches:
         return None
     return min(matches, key=lambda fx: fx["kickoff_utc"])
+
+
+def find_fixtures(home_team: str, away_team: str, days: int) -> list:
+    """
+    Comme find_fixture, mais renvoie TOUS les matchs correspondants (tries
+    par coup d'envoi), sans en choisir un a la place de l'appelant (etape
+    A17). Necessaire pour detecter une ambiguite quand les deux memes
+    equipes se croisent plusieurs fois en peu de temps. Liste vide si aucun
+    match ne correspond.
+    """
+    from datetime import datetime, timezone
+    from config import REFERENCE_TIMEZONE
+    from zoneinfo import ZoneInfo
+    from sources.team_names import normalize
+
+    today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    fixtures = get_la_liga_fixtures_cached(today, days)
+
+    home_target = normalize(home_team)
+    away_target = normalize(away_team)
+
+    matches = [
+        fx for fx in fixtures
+        if normalize(fx["teams"]["home"]["name"]) == home_target
+        and normalize(fx["teams"]["away"]["name"]) == away_target
+    ]
+    return sorted(matches, key=lambda fx: fx["kickoff_utc"])
+
+
+def find_fixture_by_id(fixture_id, days: int = 14):
+    """
+    Cherche un match precis par son identifiant stable (fixture_id, etape
+    A17), dans la fenetre de couverture live (cache). Comparaison en texte
+    pour rester robuste si l'identifiant arrive sous un type different
+    (str/int) de celui stocke en interne. Renvoie None si introuvable.
+    """
+    from datetime import datetime, timezone
+    from config import REFERENCE_TIMEZONE
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
+    fixtures = get_la_liga_fixtures_cached(today, days)
+    for fx in fixtures:
+        if str(fx["id"]) == str(fixture_id):
+            return fx
+    return None
+
+
+if __name__ == "__main__":
+    matches = build_match_requests(datetime(2026, 10, 18, tzinfo=timezone.utc), 1, "2526")
+    print(json.dumps(matches, indent=2, ensure_ascii=False))

@@ -34,6 +34,8 @@ def _candidate_bets(analyzed_matches: list) -> list:
             "market": best["market"],
             "probability": best["probability"],
             "odds": best["odds"],
+            "fixture_id": m.get("fixture_id"),  # etape A14 : propage l'identifiant du match si connu
+            "league": m.get("league"),  # etape A14 : propage le championnat si connu
         })
     return candidates
 
