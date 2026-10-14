@@ -10,34 +10,42 @@ SEASON_PAIRS = [
 ]
 
 
-def calibration_error(stat: str, shrinkage_lambda: float) -> dict:
+def calibration_error(stat: str, shrinkage_lambda: float, league: str) -> dict:
+    """
+    Mesure l'erreur de calibration (probabilite annoncee vs realite) pour un
+    marche statistique (corners/cartons), sur un championnat donne (league
+    ajoute le 14/10/2026, chantier Premier League - sans ce filtre, les
+    matchs de deux championnats se melangeraient). Pas de test de rentabilite
+    (ROI) possible ici : aucune cote reelle n'existe pour ces marches dans
+    notre source actuelle (voir engine.py), seule la calibration est mesurable.
+    """
     buckets = defaultdict(lambda: {"count": 0, "hits": 0})
     conn = get_connection()
 
     for train_season, test_season in SEASON_PAIRS:
         try:
-            compute_stat_strengths(train_season, stat, shrinkage_lambda)
+            compute_stat_strengths(train_season, league, stat, shrinkage_lambda)
         except ValueError:
             continue
 
         if stat == "corners":
             rows = conn.execute("""
                 SELECT home_team, away_team, home_corners, away_corners FROM matches
-                WHERE season = ? AND home_corners IS NOT NULL
+                WHERE season = ? AND league = ? AND home_corners IS NOT NULL
                   AND (home_corners + away_corners) <= 24 AND ABS(home_corners - away_corners) <= 15
-            """, (test_season,)).fetchall()
+            """, (test_season, league)).fetchall()
         else:
             rows = conn.execute("""
                 SELECT home_team, away_team,
                        (home_yellow + home_red) as home_cards,
                        (away_yellow + away_red) as away_cards
-                FROM matches WHERE season = ? AND home_yellow IS NOT NULL
+                FROM matches WHERE season = ? AND league = ? AND home_yellow IS NOT NULL
                   AND (home_yellow + home_red + away_yellow + away_red) <= 16
-            """, (test_season,)).fetchall()
+            """, (test_season, league)).fetchall()
 
         for r in rows:
             try:
-                pred = predict_stat(r["home_team"], r["away_team"], train_season, stat, shrinkage_lambda)
+                pred = predict_stat(r["home_team"], r["away_team"], train_season, league, stat, shrinkage_lambda)
             except ValueError:
                 continue
             actual_total = (r["home_corners"] + r["away_corners"]) if stat == "corners" else (r["home_cards"] + r["away_cards"])
@@ -54,9 +62,14 @@ def calibration_error(stat: str, shrinkage_lambda: float) -> dict:
 
 
 if __name__ == "__main__":
-    for stat in ["corners", "cards"]:
-        print(f"\n=== {stat} ===")
-        print(f"{'lambda':<10}{'erreur calib. moy.'}")
-        for lam in [0.0, 0.01, 0.03, 0.05, 0.1, 0.2]:
-            result = calibration_error(stat, lam)
-            print(f"{lam:<10}{result['mean_error_pct']:.2f} points")
+    for league in ["la_liga", "premier_league"]:
+        print(f"\n{'#' * 60}\n# {league}\n{'#' * 60}")
+        for stat in ["corners", "cards"]:
+            print(f"\n=== {stat} ({league}) ===")
+            print(f"{'lambda':<10}{'erreur calib. moy.'}")
+            for lam in [0.0, 0.01, 0.03, 0.05, 0.1, 0.2]:
+                result = calibration_error(stat, lam, league)
+                if result["mean_error_pct"] is None:
+                    print(f"{lam:<10}(aucune donnee)")
+                else:
+                    print(f"{lam:<10}{result['mean_error_pct']:.2f} points")

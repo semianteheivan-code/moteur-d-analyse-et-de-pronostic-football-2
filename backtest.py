@@ -24,8 +24,15 @@ def _rho_training_seasons(train_season: str, league: str) -> list:
     return [s for s in _known_seasons(league) if s <= train_season]
 
 
-def run_backtest_pair(train_season: str, test_season: str, league: str, buckets, stats):
-    strengths_data = compute_team_strengths(train_season, league, rho_seasons=_rho_training_seasons(train_season, league))
+def run_backtest_pair(train_season: str, test_season: str, league: str, buckets, stats, shrinkage_lambda: float = None):
+    # shrinkage_lambda (14/10/2026, en test) : None = comportement par defaut de
+    # models/poisson.py (DEFAULT_SHRINKAGE_1X2, actuellement 0.0, donc aucun
+    # changement tant qu'on ne passe pas explicitement une valeur).
+    strengths_data = compute_team_strengths(
+        train_season, league,
+        rho_seasons=_rho_training_seasons(train_season, league),
+        shrinkage_lambda=shrinkage_lambda,
+    )
     conn = get_connection()
     matches = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals, result FROM matches "
@@ -52,7 +59,7 @@ def run_backtest_pair(train_season: str, test_season: str, league: str, buckets,
             buckets[bucket]["hits"] += 1
 
 
-def run_full_backtest(league: str = "la_liga"):
+def run_full_backtest(league: str = "la_liga", shrinkage_lambda: float = None):
     season_pairs = [
         ("2122", "2223"),
         ("2223", "2324"),
@@ -64,10 +71,11 @@ def run_full_backtest(league: str = "la_liga"):
     stats = {"correct": 0, "total": 0}
 
     for train, test in season_pairs:
-        run_backtest_pair(train, test, league, buckets, stats)
+        run_backtest_pair(train, test, league, buckets, stats, shrinkage_lambda=shrinkage_lambda)
         print(f"  {train} -> {test} traite (cumul : {stats['total']} matchs)")
 
-    print(f"\n=== Backtest cumule sur {len(season_pairs)} couples de saisons ({league}) ===")
+    label = f"{league}, shrinkage={shrinkage_lambda}" if shrinkage_lambda is not None else league
+    print(f"\n=== Backtest cumule sur {len(season_pairs)} couples de saisons ({label}) ===")
     print(f"Taux de reussite (issue la plus probable) : {stats['correct']}/{stats['total']} = {stats['correct']/stats['total']:.1%}\n")
 
     print("Calibration (probabilite annoncee de victoire domicile vs realite) :")
@@ -81,11 +89,15 @@ def implied_prob(odds):
     return 1 / odds if odds else None
 
 
-def run_value_bet_backtest(train_season: str, test_season: str, league: str, bankroll_state):
+def run_value_bet_backtest(train_season: str, test_season: str, league: str, bankroll_state, shrinkage_lambda: float = None):
     # Forces (et rho) calculees UNE FOIS pour la saison d'entrainement, pas a chaque match.
     # rho restreint aux saisons <= train_season (etape M5) : jamais la saison de test.
-    strengths_data = compute_team_strengths(train_season, league, rho_seasons=_rho_training_seasons(train_season, league))
-
+    # shrinkage_lambda (14/10/2026, en test) : voir run_backtest_pair ci-dessus.
+    strengths_data = compute_team_strengths(
+        train_season, league,
+        rho_seasons=_rho_training_seasons(train_season, league),
+        shrinkage_lambda=shrinkage_lambda,
+    )
     conn = get_connection()
     matches = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals, result, "
@@ -126,7 +138,7 @@ def run_value_bet_backtest(train_season: str, test_season: str, league: str, ban
                 bankroll_state[label + "_bets"] = bankroll_state.get(label + "_bets", 0) + 1
 
 
-def run_full_value_backtest(league: str = "la_liga"):
+def run_full_value_backtest(league: str = "la_liga", shrinkage_lambda: float = None):
     season_pairs = [
         ("2122", "2223"),
         ("2223", "2324"),
@@ -137,9 +149,10 @@ def run_full_value_backtest(league: str = "la_liga"):
     bankroll_state = {"bets": 0, "staked": 0.0, "returned": 0.0}
 
     for train, test in season_pairs:
-        run_value_bet_backtest(train, test, league, bankroll_state)
+        run_value_bet_backtest(train, test, league, bankroll_state, shrinkage_lambda=shrinkage_lambda)
 
-    print(f"\n=== Test de rentabilite ({league}, value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
+    label = f"{league}, shrinkage={shrinkage_lambda}" if shrinkage_lambda is not None else league
+    print(f"\n=== Test de rentabilite ({label}, value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
     print(f"Nombre de paris simules : {bankroll_state['bets']}")
     print(f"Total mise : {bankroll_state['staked']:.1f} unites")
     print(f"Total retourne : {bankroll_state['returned']:.1f} unites")

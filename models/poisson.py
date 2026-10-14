@@ -5,6 +5,11 @@ from db.database import get_connection
 
 MAX_GOALS = 8
 RHO_BOUNDS = (-0.2, 0.2)
+DEFAULT_SHRINKAGE_1X2 = 0.0  # desactive par defaut - teste le 14/10/2026 suite a la tranche
+# ~10% mal calibree sur La Liga (equipes faibles a domicile contre Real
+# Madrid/Barcelone/Atletico - 23,9% realise contre 10% annonce). Hypothese :
+# sans regularisation, les forces des equipes dominantes peuvent devenir trop
+# extremes (contrairement a models/cards_corners.py, qui regularise deja).
 
 
 def _dixon_coles_tau_vec(hg: np.ndarray, ag: np.ndarray, lam_h: np.ndarray, lam_a: np.ndarray, rho: float) -> np.ndarray:
@@ -30,13 +35,15 @@ def _prepare_match_arrays(rows, team_to_idx: dict) -> dict:
     return {"home_idx": home_idx, "away_idx": away_idx, "home_goals": home_goals, "away_goals": away_goals}
 
 
-def _neg_log_likelihood_no_rho(params, n_teams, arrays):
+def _neg_log_likelihood_no_rho(params, n_teams, arrays, shrinkage_lambda):
     """
     Vraisemblance negative vectorisee (Poisson pur, rho=0), pour estimer
     attack/defense/home_adv. Etape M1 (13/10/2026) : home_adv est maintenant
     un parametre PAR EQUIPE (params[2n:3n]) au lieu d'un seul chiffre partage
-    par toutes les equipes - l'avantage du terrain n'a aucune raison d'etre
-    identique pour toutes les equipes d'un championnat.
+    par toutes les equipes. shrinkage_lambda (14/10/2026, en test) : penalite
+    sur attack/defense (pas home_adv), meme principe que
+    models/cards_corners.py - empeche les equipes dominantes de recevoir des
+    parametres trop extremes faute de frein.
     """
     attack = params[:n_teams]
     defense = params[n_teams:2 * n_teams]
@@ -46,15 +53,21 @@ def _neg_log_likelihood_no_rho(params, n_teams, arrays):
     lam_a = np.exp(attack[arrays["away_idx"]] + defense[arrays["home_idx"]])
 
     ll = np.sum(poisson.logpmf(arrays["home_goals"], lam_h)) + np.sum(poisson.logpmf(arrays["away_goals"], lam_a))
-    return -ll
+    penalty = shrinkage_lambda * (np.sum(attack ** 2) + np.sum(defense ** 2))
+    return -ll + penalty
 
 
-def _fit_team_strengths_mle(rows) -> dict:
+def _fit_team_strengths_mle(rows, shrinkage_lambda: float = None) -> dict:
     """
     Estime attack[team], defense[team] et home_advantage[team] (etape M1 :
     desormais par equipe, plus un seul chiffre global) par maximum de
     vraisemblance conjointe (vectorise numpy, rho=0 a cette etape).
+    shrinkage_lambda : None utilise DEFAULT_SHRINKAGE_1X2 (0.0 par defaut,
+    donc aucun changement de comportement tant qu'on ne teste pas autre chose).
     """
+    if shrinkage_lambda is None:
+        shrinkage_lambda = DEFAULT_SHRINKAGE_1X2
+
     teams = sorted({r["home_team"] for r in rows} | {r["away_team"] for r in rows})
     n = len(teams)
     if n < 2:
@@ -67,7 +80,7 @@ def _fit_team_strengths_mle(rows) -> dict:
     constraints = [{"type": "eq", "fun": lambda p, n=n: np.sum(p[:n])}]
 
     result = minimize(
-        _neg_log_likelihood_no_rho, x0, args=(n, arrays),
+        _neg_log_likelihood_no_rho, x0, args=(n, arrays, shrinkage_lambda),
         constraints=constraints, method="SLSQP",
         options={"maxiter": 300, "ftol": 1e-7},
     )
@@ -87,14 +100,16 @@ _SEASON_STRENGTHS_CACHE = {}
 _RHO_CACHE = {}  # cle = (league, tuple(sorted(seasons))) ou (league, None) pour "toutes les saisons disponibles de ce championnat"
 
 
-def _get_season_strengths(season: str, league: str) -> dict:
+def _get_season_strengths(season: str, league: str, shrinkage_lambda: float = None) -> dict:
     """
     Calcule (ou reutilise depuis le cache) les forces attack/defense/home_advantage
     d'une saison. league ajoute le 13/10/2026 (chantier Premier League) : sans ce
     filtre, les matchs de deux championnats differents se melangeraient dans la
-    meme estimation de force d'equipe.
+    meme estimation de force d'equipe. shrinkage_lambda (14/10/2026, en test) :
+    fait partie de la cle de cache pour pouvoir comparer plusieurs valeurs sans
+    qu'elles s'ecrasent entre elles.
     """
-    cache_key = (season, league)
+    cache_key = (season, league, shrinkage_lambda)
     if cache_key in _SEASON_STRENGTHS_CACHE:
         return _SEASON_STRENGTHS_CACHE[cache_key]
 
@@ -107,12 +122,12 @@ def _get_season_strengths(season: str, league: str) -> dict:
     if not rows:
         raise ValueError(f"Aucun match trouve pour la saison {season} ({league})")
 
-    strengths = _fit_team_strengths_mle(rows)
+    strengths = _fit_team_strengths_mle(rows, shrinkage_lambda)
     _SEASON_STRENGTHS_CACHE[cache_key] = strengths
     return strengths
 
 
-def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = False) -> float:
+def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = False, shrinkage_lambda: float = None) -> float:
     """
     Ajuste rho en regroupant les matchs des saisons indiquees, pour un
     championnat donne (league ajoute le 13/10/2026 - sans ce filtre, rho
@@ -127,8 +142,12 @@ def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = Fals
     Obligatoire pour un backtest (etape M5, fuite corrigee le 13/10/2026) -
     l'appelant doit ne passer QUE les saisons anterieures ou egales a la
     saison d'entrainement, jamais la saison de test.
+
+    shrinkage_lambda (14/10/2026, en test) : doit matcher la valeur utilisee
+    pour les forces d'equipe (compute_team_strengths), sinon rho serait
+    calcule sur des forces incoherentes avec celles reellement utilisees.
     """
-    cache_key = (league, tuple(sorted(seasons)) if seasons is not None else None)
+    cache_key = (league, tuple(sorted(seasons)) if seasons is not None else None, shrinkage_lambda)
     if cache_key in _RHO_CACHE and not force_refresh:
         return _RHO_CACHE[cache_key]
 
@@ -150,7 +169,7 @@ def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = Fals
         ).fetchall()
         if not rows:
             continue
-        s = _get_season_strengths(season, league)
+        s = _get_season_strengths(season, league, shrinkage_lambda)
 
         for r in rows:
             home, away = r["home_team"], r["away_team"]
@@ -179,12 +198,14 @@ def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = Fals
     return _RHO_CACHE[cache_key]
 
 
-def compute_team_strengths(season: str, league: str, rho_seasons: list = None) -> dict:
+def compute_team_strengths(season: str, league: str, rho_seasons: list = None, shrinkage_lambda: float = None) -> dict:
     """Calcule les forces d'equipe (attack, defense, home_advantage par equipe - M1)
     par MLE conjointe pour une saison et un championnat donnes (mise en cache),
-    + rho (mis en cache separement, lui aussi par championnat)."""
-    strengths = dict(_get_season_strengths(season, league))
-    strengths["rho"] = fit_global_rho(league, rho_seasons)
+    + rho (mis en cache separement, lui aussi par championnat).
+    shrinkage_lambda (14/10/2026, en test) : None = comportement par defaut
+    (DEFAULT_SHRINKAGE_1X2, 0.0 tant qu'on n'a rien decide)."""
+    strengths = dict(_get_season_strengths(season, league, shrinkage_lambda))
+    strengths["rho"] = fit_global_rho(league, rho_seasons, shrinkage_lambda=shrinkage_lambda)
     return strengths
 
 

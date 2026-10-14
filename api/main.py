@@ -367,7 +367,13 @@ def analyze(req: MatchRequest):
         return _live_fixtures_unavailable_response(league_key)
 
     if req.fixture_id is not None:
-        fx = find_fixture_by_id(req.fixture_id)
+        try:
+            fx = find_fixture_by_id(req.fixture_id)
+        except QuotaExceededError as e:
+            # 14/10/2026 : seul appel oublie dans ce garde-fou - trouve en
+            # conditions reelles (la protection de quota a declenche un 500
+            # brut au lieu d'une reponse propre pendant test_api.py).
+            return _quota_exceeded_response(e)
         if fx is None:
             return {
                 "status": "match_not_available",
