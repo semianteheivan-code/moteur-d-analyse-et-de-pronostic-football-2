@@ -5,6 +5,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS matches (
     id INTEGER PRIMARY KEY,
     season TEXT,
+    league TEXT,
     date TEXT NOT NULL,
     home_team TEXT NOT NULL,
     away_team TEXT NOT NULL,
@@ -22,6 +23,7 @@ CREATE TABLE IF NOT EXISTS matches (
 );
 
 CREATE TABLE IF NOT EXISTS match_xg (
+    league TEXT,
     date TEXT NOT NULL,
     home_team TEXT NOT NULL,
     away_team TEXT NOT NULL,
@@ -93,8 +95,37 @@ def _migrate_predictions_table(conn):
         conn.execute("ALTER TABLE predictions ADD COLUMN league TEXT")
 
 
+def _migrate_league_column(conn, table: str):
+    """
+    Ajoute la colonne league a une table matches/match_xg deja existante
+    (chantier Premier League, 13/10/2026), et remplit les lignes deja
+    presentes avec 'la_liga' (seul championnat collecte jusqu'ici) - sans
+    ce remplissage, ces lignes deviendraient invisibles a toute requete
+    future filtree par league (WHERE league = ?).
+
+    Cree aussi un nouvel index unique (league, date, home_team, away_team)
+    en plus de l'ancien UNIQUE (date, home_team, away_team) : SQLite ne
+    permet pas de modifier une contrainte UNIQUE existante par un simple
+    ALTER TABLE (il faudrait reconstruire toute la table). L'ancienne
+    contrainte reste donc active mais est sans consequence pratique : elle
+    ne bloquerait que deux equipes de meme nom, jouant l'une contre l'autre,
+    a la meme date, dans deux championnats differents - un cas qui ne se
+    presente pas entre La Liga et Premier League.
+    """
+    existing_columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if "league" not in existing_columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN league TEXT")
+    conn.execute(f"UPDATE {table} SET league = 'la_liga' WHERE league IS NULL")
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_league_date_teams "
+        f"ON {table}(league, date, home_team, away_team)"
+    )
+
+
 def init_db():
     with get_connection() as conn:
         conn.executescript(SCHEMA)
         _migrate_predictions_table(conn)
+        _migrate_league_column(conn, "matches")
+        _migrate_league_column(conn, "match_xg")
         conn.commit()

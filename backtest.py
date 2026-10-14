@@ -5,28 +5,32 @@ from db.database import get_connection
 VALUE_THRESHOLD = 0.05  # marge minimale entre proba modele et proba implicite pour parier
 
 
-def _known_seasons() -> list:
+def _known_seasons(league: str) -> list:
     conn = get_connection()
-    return sorted(r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall())
+    return sorted(r["season"] for r in conn.execute(
+        "SELECT DISTINCT season FROM matches WHERE league = ?", (league,)
+    ).fetchall())
 
 
-def _rho_training_seasons(train_season: str) -> list:
+def _rho_training_seasons(train_season: str, league: str) -> list:
     """
     Saisons eligibles pour calculer rho sans fuite (etape M5, corrigee le
     13/10/2026) : uniquement celles anterieures ou egales a la saison
     d'entrainement, jamais la saison de test - sinon le modele voit une
-    partie de la reponse avant l'evaluation.
+    partie de la reponse avant l'evaluation. league ajoute le meme jour
+    (chantier Premier League) pour ne considerer que les saisons de ce
+    championnat.
     """
-    return [s for s in _known_seasons() if s <= train_season]
+    return [s for s in _known_seasons(league) if s <= train_season]
 
 
-def run_backtest_pair(train_season: str, test_season: str, buckets, stats):
-    strengths_data = compute_team_strengths(train_season, rho_seasons=_rho_training_seasons(train_season))
+def run_backtest_pair(train_season: str, test_season: str, league: str, buckets, stats):
+    strengths_data = compute_team_strengths(train_season, league, rho_seasons=_rho_training_seasons(train_season, league))
     conn = get_connection()
     matches = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals, result FROM matches "
-        "WHERE season = ? AND home_goals IS NOT NULL",
-        (test_season,),
+        "WHERE season = ? AND league = ? AND home_goals IS NOT NULL",
+        (test_season, league),
     ).fetchall()
 
     for m in matches:
@@ -48,7 +52,7 @@ def run_backtest_pair(train_season: str, test_season: str, buckets, stats):
             buckets[bucket]["hits"] += 1
 
 
-def run_full_backtest():
+def run_full_backtest(league: str = "la_liga"):
     season_pairs = [
         ("2122", "2223"),
         ("2223", "2324"),
@@ -60,10 +64,10 @@ def run_full_backtest():
     stats = {"correct": 0, "total": 0}
 
     for train, test in season_pairs:
-        run_backtest_pair(train, test, buckets, stats)
+        run_backtest_pair(train, test, league, buckets, stats)
         print(f"  {train} -> {test} traite (cumul : {stats['total']} matchs)")
 
-    print(f"\n=== Backtest cumule sur {len(season_pairs)} couples de saisons ===")
+    print(f"\n=== Backtest cumule sur {len(season_pairs)} couples de saisons ({league}) ===")
     print(f"Taux de reussite (issue la plus probable) : {stats['correct']}/{stats['total']} = {stats['correct']/stats['total']:.1%}\n")
 
     print("Calibration (probabilite annoncee de victoire domicile vs realite) :")
@@ -77,17 +81,17 @@ def implied_prob(odds):
     return 1 / odds if odds else None
 
 
-def run_value_bet_backtest(train_season: str, test_season: str, bankroll_state):
+def run_value_bet_backtest(train_season: str, test_season: str, league: str, bankroll_state):
     # Forces (et rho) calculees UNE FOIS pour la saison d'entrainement, pas a chaque match.
     # rho restreint aux saisons <= train_season (etape M5) : jamais la saison de test.
-    strengths_data = compute_team_strengths(train_season, rho_seasons=_rho_training_seasons(train_season))
+    strengths_data = compute_team_strengths(train_season, league, rho_seasons=_rho_training_seasons(train_season, league))
 
     conn = get_connection()
     matches = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals, result, "
         "odds_home, odds_draw, odds_away, odds_over25, odds_under25 "
-        "FROM matches WHERE season = ? AND home_goals IS NOT NULL",
-        (test_season,),
+        "FROM matches WHERE season = ? AND league = ? AND home_goals IS NOT NULL",
+        (test_season, league),
     ).fetchall()
 
     for m in matches:
@@ -122,7 +126,7 @@ def run_value_bet_backtest(train_season: str, test_season: str, bankroll_state):
                 bankroll_state[label + "_bets"] = bankroll_state.get(label + "_bets", 0) + 1
 
 
-def run_full_value_backtest():
+def run_full_value_backtest(league: str = "la_liga"):
     season_pairs = [
         ("2122", "2223"),
         ("2223", "2324"),
@@ -133,9 +137,9 @@ def run_full_value_backtest():
     bankroll_state = {"bets": 0, "staked": 0.0, "returned": 0.0}
 
     for train, test in season_pairs:
-        run_value_bet_backtest(train, test, bankroll_state)
+        run_value_bet_backtest(train, test, league, bankroll_state)
 
-    print(f"\n=== Test de rentabilite (value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
+    print(f"\n=== Test de rentabilite ({league}, value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
     print(f"Nombre de paris simules : {bankroll_state['bets']}")
     print(f"Total mise : {bankroll_state['staked']:.1f} unites")
     print(f"Total retourne : {bankroll_state['returned']:.1f} unites")
@@ -166,9 +170,9 @@ def run_full_value_backtest():
 
 
 if __name__ == "__main__":
-    print(">>> Backtest de calibration\n")
-    run_full_backtest()
+    print(">>> Backtest de calibration (La Liga)\n")
+    run_full_backtest("la_liga")
 
     print("\n" + "=" * 60)
-    print(">>> Backtest de rentabilite (value bets vs cotes reelles)")
-    run_full_value_backtest()
+    print(">>> Backtest de rentabilite (value bets vs cotes reelles) (La Liga)")
+    run_full_value_backtest("la_liga")

@@ -47,6 +47,31 @@ def resolve_league_key(user_input: Optional[str]) -> Optional[str]:
     return _LEAGUE_ALIAS_TO_KEY.get(_normalize_league_key(user_input))
 
 
+# --- Championnats dont les matchs/cotes en direct fonctionnent reellement
+# (etape multi-championnats, 13/10/2026) -------------------------------------
+# LEAGUES/SUPPORTED_LEAGUES disent quels championnats le moteur CALCULE
+# (historique + forces d'equipe) - c'est deja vrai pour La Liga et Premier
+# League. Mais sources/five_dollar_football.py reste code en dur sur La
+# Liga (generalisation deliberement reportee a la fin du chantier) : sans
+# ce garde-fou, /fixtures, /analyze et /daily-batch demandes avec
+# league="premier_league" recevraient silencieusement les matchs de LA
+# LIGA, reetiquetes avec le nom du championnat demande - bug reellement
+# trouve par test_api.py le 13/10/2026, pas juste theorique.
+LIVE_FIXTURES_SUPPORTED_LEAGUES = {"la_liga"}
+
+
+def _live_fixtures_unavailable_response(league_key: str) -> dict:
+    return {
+        "status": "league_not_available",
+        "league": SUPPORTED_LEAGUES[league_key],
+        "reason": (
+            "championnat couvert par le moteur (historique et calcul), mais les matchs "
+            "en direct et les cotes ne sont pas encore disponibles pour ce championnat"
+        ),
+        "available": [SUPPORTED_LEAGUES[k] for k in LIVE_FIXTURES_SUPPORTED_LEAGUES],
+    }
+
+
 # --- Modeles de reponse (etape 5b, A6+A8) -----------------------------------
 class HealthResponse(BaseModel):
     status: str
@@ -248,8 +273,9 @@ def health():
 def leagues():
     """
     Adresse en lecture seule (etape A13) : dit au client quels championnats
-    le moteur couvre, lequel est utilise par defaut, et sous quels noms on
-    peut les demander (aliases).
+    le moteur couvre (historique + calcul), lequel est utilise par defaut,
+    et sous quels noms on peut les demander (aliases). Ne dit rien sur la
+    disponibilite des matchs en direct - voir LIVE_FIXTURES_SUPPORTED_LEAGUES.
     """
     return {
         "default_league": SUPPORTED_LEAGUES[DEFAULT_LEAGUE],
@@ -268,6 +294,8 @@ def fixtures(days: Optional[int] = None, league: Optional[str] = None):
     league_key = resolve_league_key(league)
     if league_key is None:
         return _unsupported_league_response(league or "")
+    if league_key not in LIVE_FIXTURES_SUPPORTED_LEAGUES:
+        return _live_fixtures_unavailable_response(league_key)
 
     days = min(days or DEFAULT_FIXTURES_DAYS, 14)
     today = datetime.now(ZoneInfo(REFERENCE_TIMEZONE)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -335,6 +363,8 @@ def analyze(req: MatchRequest):
     league_key = resolve_league_key(req.league)
     if league_key is None:
         return _unsupported_league_response(req.league or "")
+    if league_key not in LIVE_FIXTURES_SUPPORTED_LEAGUES:
+        return _live_fixtures_unavailable_response(league_key)
 
     if req.fixture_id is not None:
         fx = find_fixture_by_id(req.fixture_id)
@@ -356,7 +386,7 @@ def analyze(req: MatchRequest):
                 "reason": "fournissez soit fixture_id, soit home_team et away_team",
             }
 
-        home, away, unknown = resolve_team_names(req.home_team, req.away_team)
+        home, away, unknown = resolve_team_names(req.home_team, req.away_team, league_key)
         if unknown:
             return {
                 "status": "unknown_team",
@@ -409,7 +439,7 @@ def analyze(req: MatchRequest):
         odds = get_fixture_odds_cached(fx["id"])
     except QuotaExceededError as e:
         return _quota_exceeded_response(e)
-    result = analyze_match(home_team, away_team, match_date, train_season, odds=odds)
+    result = analyze_match(home_team, away_team, match_date, train_season, league_key, odds=odds)
     result["started"] = started
     result["fixture_id"] = fx["id"]  # etape A17
     result["league"] = SUPPORTED_LEAGUES[league_key]  # etape A14
@@ -456,6 +486,8 @@ def daily_batch(req: DailyBatchRequest):
     league_key = resolve_league_key(req.league)
     if league_key is None:
         return _unsupported_league_response(req.league or "")
+    if league_key not in LIVE_FIXTURES_SUPPORTED_LEAGUES:
+        return _live_fixtures_unavailable_response(league_key)
 
     if req.batch_date:
         day = datetime.strptime(req.batch_date, "%Y-%m-%d")
@@ -488,4 +520,5 @@ def daily_batch(req: DailyBatchRequest):
     combo_definitions = [c.model_dump() for c in req.combo_definitions]
     train_season = req.train_season or DEFAULT_TRAIN_SEASON
     return run_daily_batch(fixtures, train_season, combo_definitions, batch_date,
-                            save=req.save, min_minutes_before_kickoff=req.min_minutes_before_kickoff)
+                            save=req.save, min_minutes_before_kickoff=req.min_minutes_before_kickoff,
+                            league_key=league_key)

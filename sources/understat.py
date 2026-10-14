@@ -1,25 +1,26 @@
-from understatapi import UnderstatClient
+﻿from understatapi import UnderstatClient
 from db.database import get_connection
-from config import UNDERSTAT_LEAGUE
+from config import LEAGUE_BY_KEY, DEFAULT_LEAGUE
 from sources.team_names import normalize
 
-# Understat désigne une saison par son année de début ("2024" = saison 2024-2025).
+# Understat designe une saison par son annee de debut ("2024" = saison 2024-2025).
 # football-data.co.uk utilise "2425". On convertit entre les deux formats.
 def _to_understat_season(fd_season: str) -> str:
     return "20" + fd_season[:2]
 
 
-def store_season(fd_season: str):
+def store_season(fd_season: str, league_key: str = DEFAULT_LEAGUE):
     understat_season = _to_understat_season(fd_season)
+    understat_league = LEAGUE_BY_KEY[league_key]["understat_league"]
     conn = get_connection()
     inserted = 0
     skipped = 0
 
     with UnderstatClient() as understat:
-        matches = understat.league(league=UNDERSTAT_LEAGUE).get_match_data(season=understat_season)
+        matches = understat.league(league=understat_league).get_match_data(season=understat_season)
 
     for m in matches:
-        # Un match pas encore joué n'a pas de xG utilisable.
+        # Un match pas encore joue n'a pas de xG utilisable.
         if not m.get("isResult"):
             continue
         try:
@@ -34,21 +35,21 @@ def store_season(fd_season: str):
 
         conn.execute(
             """
-            INSERT OR IGNORE INTO match_xg (date, home_team, away_team, home_xg, away_xg)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO match_xg (league, date, home_team, away_team, home_xg, away_xg)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (date, home_team, away_team, home_xg, away_xg),
+            (league_key, date, home_team, away_team, home_xg, away_xg),
         )
         inserted += 1
 
     conn.commit()
-    print(f"Saison {fd_season} (Understat {understat_season}) : {inserted} lignes traitées, {skipped} ignorées.")
+    print(f"[{league_key}] Saison {fd_season} (Understat {understat_season}) : {inserted} lignes traitees, {skipped} ignorees.")
 
 
 if __name__ == "__main__":
     from config import SEASONS
     for season in SEASONS:
         try:
-            store_season(season)
+            store_season(season, DEFAULT_LEAGUE)
         except Exception as e:
-            print(f"Saison {season} ignorée : {e}")
+            print(f"Saison {season} ignoree : {e}")

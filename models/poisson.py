@@ -84,61 +84,73 @@ def _fit_team_strengths_mle(rows) -> dict:
 
 
 _SEASON_STRENGTHS_CACHE = {}
-_RHO_CACHE = {}  # cle = tuple(sorted(seasons)) de saisons utilisees, ou None pour "toutes les saisons disponibles"
+_RHO_CACHE = {}  # cle = (league, tuple(sorted(seasons))) ou (league, None) pour "toutes les saisons disponibles de ce championnat"
 
 
-def _get_season_strengths(season: str) -> dict:
-    """Calcule (ou reutilise depuis le cache) les forces attack/defense/home_advantage d'une saison."""
-    if season in _SEASON_STRENGTHS_CACHE:
-        return _SEASON_STRENGTHS_CACHE[season]
+def _get_season_strengths(season: str, league: str) -> dict:
+    """
+    Calcule (ou reutilise depuis le cache) les forces attack/defense/home_advantage
+    d'une saison. league ajoute le 13/10/2026 (chantier Premier League) : sans ce
+    filtre, les matchs de deux championnats differents se melangeraient dans la
+    meme estimation de force d'equipe.
+    """
+    cache_key = (season, league)
+    if cache_key in _SEASON_STRENGTHS_CACHE:
+        return _SEASON_STRENGTHS_CACHE[cache_key]
 
     conn = get_connection()
     rows = conn.execute(
         "SELECT home_team, away_team, home_goals, away_goals FROM matches "
-        "WHERE season = ? AND home_goals IS NOT NULL",
-        (season,),
+        "WHERE season = ? AND league = ? AND home_goals IS NOT NULL",
+        (season, league),
     ).fetchall()
     if not rows:
-        raise ValueError(f"Aucun match trouve pour la saison {season}")
+        raise ValueError(f"Aucun match trouve pour la saison {season} ({league})")
 
     strengths = _fit_team_strengths_mle(rows)
-    _SEASON_STRENGTHS_CACHE[season] = strengths
+    _SEASON_STRENGTHS_CACHE[cache_key] = strengths
     return strengths
 
 
-def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
+def fit_global_rho(league: str, seasons: list = None, force_refresh: bool = False) -> float:
     """
-    Ajuste rho en regroupant les matchs des saisons indiquees.
+    Ajuste rho en regroupant les matchs des saisons indiquees, pour un
+    championnat donne (league ajoute le 13/10/2026 - sans ce filtre, rho
+    serait calcule en melangeant les matchs de plusieurs championnats).
 
     seasons=None (par defaut) : utilise TOUTES les saisons disponibles en
-    base - comportement du moteur en production (engine.py, via
-    predict_match), correct et sans risque (aucune saison future n'existe
-    encore a ce moment-la).
+    base pour ce championnat - comportement du moteur en production
+    (engine.py, via predict_match), correct et sans risque (aucune saison
+    future n'existe encore a ce moment-la).
 
     seasons=[...] explicite : restreint le calcul a ces saisons uniquement.
     Obligatoire pour un backtest (etape M5, fuite corrigee le 13/10/2026) -
     l'appelant doit ne passer QUE les saisons anterieures ou egales a la
     saison d'entrainement, jamais la saison de test.
     """
-    cache_key = tuple(sorted(seasons)) if seasons is not None else None
+    cache_key = (league, tuple(sorted(seasons)) if seasons is not None else None)
     if cache_key in _RHO_CACHE and not force_refresh:
         return _RHO_CACHE[cache_key]
 
     conn = get_connection()
     if seasons is None:
-        seasons = [r["season"] for r in conn.execute("SELECT DISTINCT season FROM matches").fetchall()]
+        seasons = [
+            r["season"] for r in conn.execute(
+                "SELECT DISTINCT season FROM matches WHERE league = ?", (league,)
+            ).fetchall()
+        ]
 
     pooled_lam_h, pooled_lam_a, pooled_hg, pooled_ag = [], [], [], []
 
     for season in seasons:
         rows = conn.execute(
             "SELECT home_team, away_team, home_goals, away_goals FROM matches "
-            "WHERE season = ? AND home_goals IS NOT NULL",
-            (season,),
+            "WHERE season = ? AND league = ? AND home_goals IS NOT NULL",
+            (season, league),
         ).fetchall()
         if not rows:
             continue
-        s = _get_season_strengths(season)
+        s = _get_season_strengths(season, league)
 
         for r in rows:
             home, away = r["home_team"], r["away_team"]
@@ -167,11 +179,12 @@ def fit_global_rho(seasons: list = None, force_refresh: bool = False) -> float:
     return _RHO_CACHE[cache_key]
 
 
-def compute_team_strengths(season: str, rho_seasons: list = None) -> dict:
+def compute_team_strengths(season: str, league: str, rho_seasons: list = None) -> dict:
     """Calcule les forces d'equipe (attack, defense, home_advantage par equipe - M1)
-    par MLE conjointe pour une saison (mise en cache), + rho (mis en cache separement)."""
-    strengths = dict(_get_season_strengths(season))
-    strengths["rho"] = fit_global_rho(rho_seasons)
+    par MLE conjointe pour une saison et un championnat donnes (mise en cache),
+    + rho (mis en cache separement, lui aussi par championnat)."""
+    strengths = dict(_get_season_strengths(season, league))
+    strengths["rho"] = fit_global_rho(league, rho_seasons)
     return strengths
 
 
@@ -220,6 +233,6 @@ def predict_match_from_strengths(strengths_data: dict, home_team: str, away_team
     }
 
 
-def predict_match(home_team: str, away_team: str, season: str) -> dict:
-    strengths_data = compute_team_strengths(season)
+def predict_match(home_team: str, away_team: str, season: str, league: str) -> dict:
+    strengths_data = compute_team_strengths(season, league)
     return predict_match_from_strengths(strengths_data, home_team, away_team)

@@ -51,11 +51,17 @@ def _fit_strengths(rows, home_col, away_col, shrinkage_lambda):
     return {"attack": attack, "defense": defense, "home_advantage": float(params[2 * n])}
 
 
-def compute_stat_strengths(season: str, stat: str, shrinkage_lambda: float = None) -> dict:
+def compute_stat_strengths(season: str, league: str, stat: str, shrinkage_lambda: float = None) -> dict:
+    """
+    Calcule (ou reutilise depuis le cache) les forces attack/defense pour un
+    marche statistique (corners/cartons). league ajoute le 13/10/2026
+    (chantier Premier League) : sans ce filtre, les matchs de deux
+    championnats differents se melangeraient dans la meme estimation.
+    """
     if shrinkage_lambda is None:
         shrinkage_lambda = DEFAULT_SHRINKAGE.get(stat, 0.0)
 
-    cache_key = (season, stat, shrinkage_lambda)
+    cache_key = (season, league, stat, shrinkage_lambda)
     if cache_key in _STRENGTHS_CACHE:
         return _STRENGTHS_CACHE[cache_key]
 
@@ -63,10 +69,10 @@ def compute_stat_strengths(season: str, stat: str, shrinkage_lambda: float = Non
     if stat == "corners":
         rows = conn.execute("""
             SELECT home_team, away_team, home_corners, away_corners FROM matches
-            WHERE season = ? AND home_corners IS NOT NULL
+            WHERE season = ? AND league = ? AND home_corners IS NOT NULL
               AND (home_corners + away_corners) <= 24
               AND ABS(home_corners - away_corners) <= 15
-        """, (season,)).fetchall()
+        """, (season, league)).fetchall()
         strengths = _fit_strengths(rows, "home_corners", "away_corners", shrinkage_lambda)
     elif stat == "cards":
         rows = conn.execute("""
@@ -74,22 +80,22 @@ def compute_stat_strengths(season: str, stat: str, shrinkage_lambda: float = Non
                    (home_yellow + home_red) as home_cards,
                    (away_yellow + away_red) as away_cards
             FROM matches
-            WHERE season = ? AND home_yellow IS NOT NULL
+            WHERE season = ? AND league = ? AND home_yellow IS NOT NULL
               AND (home_yellow + home_red + away_yellow + away_red) <= 16
-        """, (season,)).fetchall()
+        """, (season, league)).fetchall()
         strengths = _fit_strengths(rows, "home_cards", "away_cards", shrinkage_lambda)
     else:
         raise ValueError(f"stat inconnu : {stat} (attendu 'corners' ou 'cards')")
 
     if not rows:
-        raise ValueError(f"Aucun match trouve pour la saison {season} ({stat})")
+        raise ValueError(f"Aucun match trouve pour la saison {season} ({league}, {stat})")
 
     _STRENGTHS_CACHE[cache_key] = strengths
     return strengths
 
 
-def predict_stat(home_team: str, away_team: str, season: str, stat: str, shrinkage_lambda: float = None) -> dict:
-    strengths = compute_stat_strengths(season, stat, shrinkage_lambda)
+def predict_stat(home_team: str, away_team: str, season: str, league: str, stat: str, shrinkage_lambda: float = None) -> dict:
+    strengths = compute_stat_strengths(season, league, stat, shrinkage_lambda)
     attack, defense, home_adv = strengths["attack"], strengths["defense"], strengths["home_advantage"]
 
     if home_team not in attack or away_team not in attack:
@@ -117,5 +123,5 @@ def predict_stat(home_team: str, away_team: str, season: str, stat: str, shrinka
 
 if __name__ == "__main__":
     for stat in ["corners", "cards"]:
-        result = predict_stat("Real Madrid", "Barcelona", season="2425", stat=stat)
+        result = predict_stat("Real Madrid", "Barcelona", season="2425", league="la_liga", stat=stat)
         print(f"{stat} (shrinkage par defaut) : {result}")

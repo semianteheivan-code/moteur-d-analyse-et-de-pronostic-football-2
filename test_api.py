@@ -65,16 +65,18 @@ except Exception as e:
     record("GET /fixtures renvoie La Liga par defaut", "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
-# Test 3 : /fixtures avec league invalide -> league_not_available
+# Test 3 : /fixtures avec league connue du moteur mais sans matchs en
+# direct branches (premier_league, 13/10/2026) -> league_not_available
 # ---------------------------------------------------------------------
 try:
     r = requests.get(f"{BASE}/fixtures", params={"league": "premier_league"})
     data = r.json()
     ok = data.get("status") == "league_not_available" and data.get("available") == ["La Liga"]
-    record("GET /fixtures?league=premier_league -> league_not_available",
+    record("GET /fixtures?league=premier_league -> league_not_available (matchs en direct pas encore branches)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("GET /fixtures?league=premier_league -> league_not_available", "FAIL", f"exception: {e}")
+    record("GET /fixtures?league=premier_league -> league_not_available (matchs en direct pas encore branches)",
+           "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
 # Test 4 : /analyze sur un vrai match decouvert via /fixtures
@@ -118,7 +120,8 @@ except Exception as e:
     record("POST /analyze Real Madrid vs Barcelona -> match_not_available ou ok", "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
-# Test 6 : /analyze avec league invalide -> league_not_available
+# Test 6 : /analyze avec championnat connu mais sans matchs en direct
+# branches (premier_league) -> league_not_available
 # ---------------------------------------------------------------------
 try:
     r = requests.post(f"{BASE}/analyze", json={
@@ -126,13 +129,15 @@ try:
     })
     data = r.json()
     ok = data.get("status") == "league_not_available"
-    record("POST /analyze league=premier_league -> league_not_available",
+    record("POST /analyze league=premier_league -> league_not_available (matchs en direct pas encore branches)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("POST /analyze league=premier_league -> league_not_available", "FAIL", f"exception: {e}")
+    record("POST /analyze league=premier_league -> league_not_available (matchs en direct pas encore branches)",
+           "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
-# Test 7 : /daily-batch avec league invalide -> league_not_available
+# Test 7 : /daily-batch avec championnat connu mais sans matchs en direct
+# branches (premier_league) -> league_not_available
 # ---------------------------------------------------------------------
 try:
     r = requests.post(f"{BASE}/daily-batch", json={
@@ -141,10 +146,11 @@ try:
     })
     data = r.json()
     ok = data.get("status") == "league_not_available"
-    record("POST /daily-batch league=premier_league -> league_not_available",
+    record("POST /daily-batch league=premier_league -> league_not_available (matchs en direct pas encore branches)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("POST /daily-batch league=premier_league -> league_not_available", "FAIL", f"exception: {e}")
+    record("POST /daily-batch league=premier_league -> league_not_available (matchs en direct pas encore branches)",
+           "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
 # Test 8 : /daily-batch avec save=false -> aucune ecriture en base
@@ -236,23 +242,30 @@ except Exception as e:
            "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
-# Test 14 (A13) : GET /leagues liste La Liga par defaut
+# Test 14 (A13) : GET /leagues liste tous les championnats onboardes
+# (mis a jour le 13/10/2026 : La Liga + Premier League, au lieu d'un seul)
 # ---------------------------------------------------------------------
 try:
     r = requests.get(f"{BASE}/leagues")
     data = r.json()
     leagues_list = data.get("leagues", [])
+    names = {entry.get("name") for entry in leagues_list}
+    la_liga_entry = next((e for e in leagues_list if e.get("name") == "La Liga"), None)
+    premier_league_entry = next((e for e in leagues_list if e.get("name") == "Premier League"), None)
     ok = (
         data.get("default_league") == "La Liga"
-        and len(leagues_list) == 1
-        and leagues_list[0].get("name") == "La Liga"
-        and leagues_list[0].get("country") == "Espagne"
-        and "la liga" in leagues_list[0].get("aliases", [])
+        and names == {"La Liga", "Premier League"}
+        and la_liga_entry is not None
+        and la_liga_entry.get("country") == "Espagne"
+        and "la liga" in la_liga_entry.get("aliases", [])
+        and premier_league_entry is not None
+        and premier_league_entry.get("country") == "Angleterre"
+        and "premier league" in premier_league_entry.get("aliases", [])
     )
-    record("GET /leagues -> default_league='La Liga' avec une entree complete (A13)",
+    record("GET /leagues -> default_league='La Liga', La Liga + Premier League listees (A13)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("GET /leagues -> default_league='La Liga' avec une entree complete (A13)",
+    record("GET /leagues -> default_league='La Liga', La Liga + Premier League listees (A13)",
            "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
@@ -269,16 +282,18 @@ except Exception as e:
     record("GET /fixtures?league=liga et league=LA LIGA -> La Liga (A16)", "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
-# Test 16 (A16) : championnat inconnu -> available liste les championnats
+# Test 16 (A16) : championnat connu mais sans matchs en direct, demande
+# via un surnom (premier league) -> league_not_available
 # ---------------------------------------------------------------------
 try:
     r = requests.get(f"{BASE}/fixtures", params={"league": "premier league"})
     data = r.json()
     ok = data.get("status") == "league_not_available" and data.get("available") == ["La Liga"]
-    record("GET /fixtures?league=premier league -> available=['La Liga'] (A16)",
+    record("GET /fixtures?league=premier league -> league_not_available (matchs en direct pas encore branches) (A16)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("GET /fixtures?league=premier league -> available=['La Liga'] (A16)", "FAIL", f"exception: {e}")
+    record("GET /fixtures?league=premier league -> league_not_available (matchs en direct pas encore branches) (A16)",
+           "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------
 # Test 17 (A17) : /fixtures expose un fixture_id par match

@@ -6,11 +6,6 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "moteur.db"
 DATA_DIR.mkdir(exist_ok=True)
 
-# --- Championnat de la v1 ---
-LEAGUE_NAME = "La Liga"
-FOOTBALL_DATA_CODE = "SP1"      # code du championnat sur football-data.co.uk
-UNDERSTAT_LEAGUE = "La_Liga"    # nom utilise par Understat
-
 # --- Saisons historiques (format football-data : "2526" = 2025-2026) ---
 SEASONS = ["2122", "2223", "2324", "2425", "2526", "2627"]
 
@@ -29,21 +24,37 @@ DEFAULT_FIXTURES_DAYS = 3
 FIXTURES_CACHE_TTL_HOURS = 12   # cache du calendrier (change rarement)
 ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 
-# --- Championnats supportes (etape 5a A7, etendue A13) ---
-# Une entree par championnat : nom officiel (ce que le moteur renvoie partout
-# ailleurs, champ "name"), pays (affichage cote client), surnoms (minuscules,
-# matches sans tenir compte des majuscules ni des espaces en trop - A16).
-# L'ordre de la liste est l'ordre d'affichage souhaite (A13). Ajouter un
-# championnat ne demande qu'une entree ici cote contrat API - un seul est
-# reellement couvert aujourd'hui (aucune colonne league en base, SP1/Understat
-# "La Liga" codes en dur ci-dessus) : onboarder reellement un 2e championnat
-# (historique, team_names.py, etc.) reste un chantier a part.
+# --- Championnats supportes (etape 5a A7, etendue A13, onboarding Premier
+# League le 13/10/2026) --------------------------------------------------
+# Une entree par championnat : nom officiel (champ "name"), pays (affichage
+# cote client), surnoms (minuscules, matches sans tenir compte des
+# majuscules ni des espaces en trop - A16), et les 3 identifiants source
+# necessaires pour collecter son historique/ses matchs en direct :
+#   - football_data_code : code du championnat sur football-data.co.uk
+#   - understat_league   : nom utilise par Understat (xG)
+#   - five_dollar_api_id : identifiant numerique du championnat cote
+#     5DollarFootballAPI (calendrier/cotes en direct, pas encore utilise
+#     pour Premier League - sources/five_dollar_football.py reste pour
+#     l'instant code en dur sur La Liga, generalisation prevue plus tard)
+# L'ordre de la liste est l'ordre d'affichage souhaite (A13).
 LEAGUES = [
     {
         "key": "la_liga",
         "name": "La Liga",
         "country": "Espagne",
         "aliases": ["la liga", "liga", "laliga", "espagne", "spain", "sp1"],
+        "football_data_code": "SP1",
+        "understat_league": "La_Liga",
+        "five_dollar_api_id": 4212821298,
+    },
+    {
+        "key": "premier_league",
+        "name": "Premier League",
+        "country": "Angleterre",
+        "aliases": ["premier league", "epl", "angleterre", "england", "england premier league", "e0"],
+        "football_data_code": "E0",
+        "understat_league": "EPL",
+        "five_dollar_api_id": 4160026622,
     },
 ]
 DEFAULT_LEAGUE = "la_liga"
@@ -51,6 +62,12 @@ DEFAULT_LEAGUE = "la_liga"
 # Garde la forme simple (cle -> nom officiel) utilisee par le code existant
 # (A7) - derivee de LEAGUES, une seule source de verite.
 SUPPORTED_LEAGUES = {entry["key"]: entry["name"] for entry in LEAGUES}
+
+# Acces direct a l'entree complete d'un championnat par sa cle (nouveau,
+# 13/10/2026) - utilise par sources/football_data.py et sources/understat.py
+# pour retrouver football_data_code/understat_league sans dependre de
+# constantes globales figees sur un seul championnat.
+LEAGUE_BY_KEY = {entry["key"]: entry for entry in LEAGUES}
 
 # --- Protection de quota (etape 9, corrigee le 14/10/2026 - abonnement Pro) ---
 # Le palier gratuit annoncait 60 requetes/heure (fenetre horaire). Le palier
