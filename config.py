@@ -40,6 +40,16 @@ ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 #     la documentation du fournisseur (page "league coverage"), PAS ENCORE
 #     verifie empiriquement (aucun appel reel ne l'utilise encore) - a
 #     confirmer le jour ou on generalise les matchs/cotes en direct.
+#   - value_threshold    : seuil minimal d'edge (proba modele - proba
+#     implicite de la cote) pour qu'un pari soit considere "value bet"
+#     (voir get_value_threshold ci-dessous). 0.05 par defaut partout ;
+#     premier_league abaisse a 0.01 le 14/10/2026 suite a un balayage
+#     complet (seuils 0% a 10%, 4 saisons, ~1200 a 2100 paris simules par
+#     seuil) qui montre un ROI de -8.0% a 5% contre -3.5% a 1% - gain net
+#     et stable sur un large echantillon (cause identifiee : le marche
+#     "X" n'avait que quelques dizaines de paris a 5%, et ceux-la etaient
+#     particulierement mauvais). Reste negatif (-3.5%), donc toujours pas
+#     rentable : objectif de rentabilite inchange, voir JOURNAL_PROJET.md.
 # L'ordre de la liste est l'ordre d'affichage souhaite (A13).
 LEAGUES = [
     {
@@ -50,6 +60,7 @@ LEAGUES = [
         "football_data_code": "SP1",
         "understat_league": "La_Liga",
         "five_dollar_api_id": 4212821298,
+        "value_threshold": 0.05,
     },
     {
         "key": "premier_league",
@@ -59,6 +70,7 @@ LEAGUES = [
         "football_data_code": "E0",
         "understat_league": "EPL",
         "five_dollar_api_id": 4160026622,
+        "value_threshold": 0.01,
     },
     {
         "key": "bundesliga",
@@ -68,6 +80,7 @@ LEAGUES = [
         "football_data_code": "D1",
         "understat_league": "Bundesliga",
         "five_dollar_api_id": 686337048,
+        "value_threshold": 0.05,
     },
     {
         "key": "serie_a",
@@ -77,6 +90,7 @@ LEAGUES = [
         "football_data_code": "I1",
         "understat_league": "Serie_A",
         "five_dollar_api_id": 3405541143,
+        "value_threshold": 0.05,
     },
     {
         "key": "ligue_1",
@@ -86,6 +100,7 @@ LEAGUES = [
         "football_data_code": "F1",
         "understat_league": "Ligue_1",
         "five_dollar_api_id": 3614399544,
+        "value_threshold": 0.05,
     },
 ]
 DEFAULT_LEAGUE = "la_liga"
@@ -110,3 +125,19 @@ LEAGUE_BY_KEY = {entry["key"]: entry for entry in LEAGUES}
 # meme granularite (secondes), pas une approximation horaire.
 API_QUOTA_LIMIT_PER_WINDOW = 8     # marge de securite sous les 10/min reels
 API_QUOTA_WINDOW_SECONDS = 60
+
+
+def get_value_threshold(league: str) -> float:
+    """
+    Seuil minimal d'edge (proba modele - proba implicite de la cote) a
+    partir duquel un pari est considere comme "value bet". Un seul endroit
+    pour ce reglage (14/10/2026, chantier "seuils par championnat") :
+    utilise a la fois par engine.py (moteur en direct) et backtest.py
+    (tests) - avant cette date, chacun avait sa propre constante 0.05
+    dupliquee. Retombe sur 0.05 par defaut si le championnat n'a pas
+    d'entree "value_threshold" ou n'est pas connu.
+    """
+    entry = LEAGUE_BY_KEY.get(league)
+    if entry is None:
+        return 0.05
+    return entry.get("value_threshold", 0.05)

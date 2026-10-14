@@ -243,29 +243,40 @@ except Exception as e:
 
 # ---------------------------------------------------------------------
 # Test 14 (A13) : GET /leagues liste tous les championnats onboardes
-# (mis a jour le 13/10/2026 : La Liga + Premier League, au lieu d'un seul)
+# (mis a jour le 14/10/2026 : 5 championnats desormais onboardes -
+# La Liga, Premier League, Bundesliga, Serie A, Ligue 1 - au lieu de 2
+# le 13/10/2026. Meme rigueur de verification : country + alias pour
+# chacun, pas seulement le nombre.)
 # ---------------------------------------------------------------------
 try:
     r = requests.get(f"{BASE}/leagues")
     data = r.json()
     leagues_list = data.get("leagues", [])
     names = {entry.get("name") for entry in leagues_list}
-    la_liga_entry = next((e for e in leagues_list if e.get("name") == "La Liga"), None)
-    premier_league_entry = next((e for e in leagues_list if e.get("name") == "Premier League"), None)
+    entries_by_name = {entry.get("name"): entry for entry in leagues_list}
+
+    expected = {
+        "La Liga": {"country": "Espagne", "alias": "la liga"},
+        "Premier League": {"country": "Angleterre", "alias": "premier league"},
+        "Bundesliga": {"country": "Allemagne", "alias": "bundesliga"},
+        "Serie A": {"country": "Italie", "alias": "serie a"},
+        "Ligue 1": {"country": "France", "alias": "ligue 1"},
+    }
+
     ok = (
         data.get("default_league") == "La Liga"
-        and names == {"La Liga", "Premier League"}
-        and la_liga_entry is not None
-        and la_liga_entry.get("country") == "Espagne"
-        and "la liga" in la_liga_entry.get("aliases", [])
-        and premier_league_entry is not None
-        and premier_league_entry.get("country") == "Angleterre"
-        and "premier league" in premier_league_entry.get("aliases", [])
+        and names == set(expected.keys())
+        and all(
+            entries_by_name.get(name) is not None
+            and entries_by_name[name].get("country") == exp["country"]
+            and exp["alias"] in entries_by_name[name].get("aliases", [])
+            for name, exp in expected.items()
+        )
     )
-    record("GET /leagues -> default_league='La Liga', La Liga + Premier League listees (A13)",
+    record("GET /leagues -> default_league='La Liga', 5 championnats listes (A13)",
            "OK" if ok else "FAIL", f"body={data}")
 except Exception as e:
-    record("GET /leagues -> default_league='La Liga', La Liga + Premier League listees (A13)",
+    record("GET /leagues -> default_league='La Liga', 5 championnats listes (A13)",
            "FAIL", f"exception: {e}")
 
 # ---------------------------------------------------------------------

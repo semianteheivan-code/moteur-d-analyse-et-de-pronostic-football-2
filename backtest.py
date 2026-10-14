@@ -1,8 +1,9 @@
 ﻿from collections import defaultdict
 from models.poisson import compute_team_strengths, predict_match_from_strengths
 from db.database import get_connection
+from config import get_value_threshold
 
-VALUE_THRESHOLD = 0.05  # marge minimale entre proba modele et proba implicite pour parier
+VALUE_THRESHOLD = 0.05  # valeur de repli si un championnat n'a pas d'entree dans config.py (voir get_value_threshold)
 
 
 def _known_seasons(league: str) -> list:
@@ -89,10 +90,14 @@ def implied_prob(odds):
     return 1 / odds if odds else None
 
 
-def run_value_bet_backtest(train_season: str, test_season: str, league: str, bankroll_state, shrinkage_lambda: float = None):
+def run_value_bet_backtest(train_season: str, test_season: str, league: str, bankroll_state, shrinkage_lambda: float = None, value_threshold: float = None):
     # Forces (et rho) calculees UNE FOIS pour la saison d'entrainement, pas a chaque match.
     # rho restreint aux saisons <= train_season (etape M5) : jamais la saison de test.
-    # shrinkage_lambda (14/10/2026, en test) : voir run_backtest_pair ci-dessus.
+    # shrinkage_lambda : voir run_backtest_pair ci-dessus.
+    # value_threshold (14/10/2026) : None = utilise get_value_threshold(league), donc le
+    # reglage par championnat defini dans config.py (5% par defaut, 1% pour Premier League
+    # depuis le 14/10/2026). Passer une valeur explicite reste possible pour un balayage.
+    threshold = value_threshold if value_threshold is not None else get_value_threshold(league)
     strengths_data = compute_team_strengths(
         train_season, league,
         rho_seasons=_rho_training_seasons(train_season, league),
@@ -127,7 +132,7 @@ def run_value_bet_backtest(train_season: str, test_season: str, league: str, ban
             if odds is None:
                 continue
             market_prob = implied_prob(odds)
-            if model_prob - market_prob >= VALUE_THRESHOLD:
+            if model_prob - market_prob >= threshold:
                 bankroll_state["bets"] += 1
                 bankroll_state["staked"] += 1
                 bankroll_state[label + "_staked"] = bankroll_state.get(label + "_staked", 0) + 1
@@ -138,7 +143,7 @@ def run_value_bet_backtest(train_season: str, test_season: str, league: str, ban
                 bankroll_state[label + "_bets"] = bankroll_state.get(label + "_bets", 0) + 1
 
 
-def run_full_value_backtest(league: str = "la_liga", shrinkage_lambda: float = None):
+def run_full_value_backtest(league: str = "la_liga", shrinkage_lambda: float = None, value_threshold: float = None):
     season_pairs = [
         ("2122", "2223"),
         ("2223", "2324"),
@@ -149,10 +154,11 @@ def run_full_value_backtest(league: str = "la_liga", shrinkage_lambda: float = N
     bankroll_state = {"bets": 0, "staked": 0.0, "returned": 0.0}
 
     for train, test in season_pairs:
-        run_value_bet_backtest(train, test, league, bankroll_state, shrinkage_lambda=shrinkage_lambda)
+        run_value_bet_backtest(train, test, league, bankroll_state, shrinkage_lambda=shrinkage_lambda, value_threshold=value_threshold)
 
+    threshold = value_threshold if value_threshold is not None else get_value_threshold(league)
     label = f"{league}, shrinkage={shrinkage_lambda}" if shrinkage_lambda is not None else league
-    print(f"\n=== Test de rentabilite ({label}, value bets detectes, seuil {VALUE_THRESHOLD:.0%}) ===")
+    print(f"\n=== Test de rentabilite ({label}, value bets detectes, seuil {threshold:.0%}) ===")
     print(f"Nombre de paris simules : {bankroll_state['bets']}")
     print(f"Total mise : {bankroll_state['staked']:.1f} unites")
     print(f"Total retourne : {bankroll_state['returned']:.1f} unites")

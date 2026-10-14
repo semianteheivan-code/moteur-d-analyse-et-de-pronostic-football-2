@@ -3,6 +3,7 @@ from models.poisson import compute_team_strengths, predict_match_from_strengths
 from models.cards_corners import predict_stat
 from features.form import compute_match_features
 from sources.team_names import normalize
+from config import get_value_threshold
 
 MISSING_DATA_REFUSAL_THRESHOLD = 0.40  # section 7 du cahier des charges
 SUSPICIOUS_EDGE_THRESHOLD = 0.20  # M4 : au-dela, edge suspect (cote obsolete/erreur probable), pas une vraie opportunite
@@ -162,6 +163,8 @@ def analyze_match(home_team: str, away_team: str, match_date: str, train_season:
     strengths = compute_team_strengths(train_season, league)
     probs = predict_match_from_strengths(strengths, home_team, away_team)
 
+    value_threshold = get_value_threshold(league)
+
     markets = {}
     for label in SIMPLE_MARKETS + DOUBLE_CHANCE_MARKETS:
         model_prob = probs.get(label)
@@ -173,7 +176,7 @@ def analyze_match(home_team: str, away_team: str, match_date: str, train_season:
                 "market_odds": odds[label],
                 "market_implied_probability": round(market_prob, 4),
                 "edge": round(edge, 4),
-                "value_bet": edge >= 0.05,
+                "value_bet": edge >= value_threshold,
                 "suspicious": edge >= SUSPICIOUS_EDGE_THRESHOLD,
             })
         markets[label] = entry
