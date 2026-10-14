@@ -25,7 +25,7 @@ FIXTURES_CACHE_TTL_HOURS = 12   # cache du calendrier (change rarement)
 ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 
 # --- Championnats supportes (etape 5a A7, etendue A13, onboarding Premier
-# League le 13/10/2026) --------------------------------------------------
+# League le 13/10/2026, Bundesliga/Serie A/Ligue 1 le 14/10/2026) ----------
 # Une entree par championnat : nom officiel (champ "name"), pays (affichage
 # cote client), surnoms (minuscules, matches sans tenir compte des
 # majuscules ni des espaces en trop - A16), et les 3 identifiants source
@@ -34,8 +34,12 @@ ODDS_CACHE_TTL_HOURS = 2        # cache des cotes (bouge plus vite)
 #   - understat_league   : nom utilise par Understat (xG)
 #   - five_dollar_api_id : identifiant numerique du championnat cote
 #     5DollarFootballAPI (calendrier/cotes en direct, pas encore utilise
-#     pour Premier League - sources/five_dollar_football.py reste pour
-#     l'instant code en dur sur La Liga, generalisation prevue plus tard)
+#     pour aucun championnat hors La Liga - sources/five_dollar_football.py
+#     reste pour l'instant code en dur sur La Liga, generalisation prevue
+#     plus tard). Pour Bundesliga/Serie A/Ligue 1, cet identifiant vient de
+#     la documentation du fournisseur (page "league coverage"), PAS ENCORE
+#     verifie empiriquement (aucun appel reel ne l'utilise encore) - a
+#     confirmer le jour ou on generalise les matchs/cotes en direct.
 # L'ordre de la liste est l'ordre d'affichage souhaite (A13).
 LEAGUES = [
     {
@@ -55,6 +59,33 @@ LEAGUES = [
         "football_data_code": "E0",
         "understat_league": "EPL",
         "five_dollar_api_id": 4160026622,
+    },
+    {
+        "key": "bundesliga",
+        "name": "Bundesliga",
+        "country": "Allemagne",
+        "aliases": ["bundesliga", "allemagne", "germany", "d1"],
+        "football_data_code": "D1",
+        "understat_league": "Bundesliga",
+        "five_dollar_api_id": 686337048,
+    },
+    {
+        "key": "serie_a",
+        "name": "Serie A",
+        "country": "Italie",
+        "aliases": ["serie a", "seriea", "italie", "italy", "i1"],
+        "football_data_code": "I1",
+        "understat_league": "Serie_A",
+        "five_dollar_api_id": 3405541143,
+    },
+    {
+        "key": "ligue_1",
+        "name": "Ligue 1",
+        "country": "France",
+        "aliases": ["ligue 1", "ligue1", "france", "f1"],
+        "football_data_code": "F1",
+        "understat_league": "Ligue_1",
+        "five_dollar_api_id": 3614399544,
     },
 ]
 DEFAULT_LEAGUE = "la_liga"
